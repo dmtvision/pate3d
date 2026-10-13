@@ -1,0 +1,16 @@
+{
+  "name": "Pâte3D - Sculpte de l'argile en 3D",
+  "short_name": "Pâte3D",
+  "description": "Sculpture 3D type argile pour enfants, avec export prêt pour l'impression 3D.",
+  "lang": "fr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#fbe6b4",
+  "theme_color": "#fbe6b4",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
