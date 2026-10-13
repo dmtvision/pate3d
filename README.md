@@ -15,29 +15,48 @@ Copier le dossier tel quel sur un serveur web : `index.html`, `manifest.webmanif
 - Les workers (export hors du fil principal) demandent un vrai serveur web (`http(s)://`) ; en `file://` l'export se fait sur le fil principal.
 
 ## Disposition (tous les outils sont toujours visibles)
-- **Outils principaux, à gauche** : Ajouter, Enlever, Étirer, Tirer, Lisser, Aplatir, Tampon ; sous un trait pointillé, tout en bas :
-  **Formes** et **Importer** (« objets » qu'on place au lieu de sculpter).
-- **Navigation, en haut à gauche** (carte repliable avec la flèche) : **sphère 3D XYZ** (X rouge = gauche-droite, Y vert = devant-derrière,
-  Z bleu = haut-bas, comme dans l'impression 3D) — on la **fait glisser pour tourner**, on **touche un axe pour regarder depuis cet axe** ;
-  boutons de rotation (⟲ ⟳ ∧ ∨), **curseur de zoom** + boutons loupe + **molette** (qui rapproche de l'endroit visé), vues Devant / Côté /
-  Dessus, accueil, et l'outil « Tourner à la main ».
-- **Réglages, à droite** : taille et force propres à chaque outil, 3 tailles rapides, symétrie, 8 couleurs, « Toute la forme »
-  (plus haut / bas / large / fin, tout lisser).
-- Raccourcis : 1-8 outils, `[` `]` taille, `+` `-` zoom, Ctrl+Z / Ctrl+Y, Échap (ferme / annule le placement), Entrée (valide).
+- **Colonne de gauche = navigation + outils**, de haut en bas :
+  - **Navigation** (repliable avec la petite flèche) : **sphère 3D XYZ** (X rouge = gauche-droite, Y vert = devant-derrière, Z bleu = haut-bas, comme
+    dans l'impression 3D) — on la **fait glisser pour tourner**, on **touche un axe pour regarder depuis cet axe** ; boutons de rotation
+    (violet) et d'inclinaison (bleu), **curseur de zoom** + loupes (vert) + **molette** (qui rapproche de l'endroit visé), vues Devant / Côté /
+    Dessus (orange) et accueil (rose).
+  - **Outils** : Ajouter, Enlever, Élastique, Tirer, Lisser, Aplatir, Tampon et **Pinceaux** (menu en bas de l'écran, voir plus bas).
+  - **Formes** et **Importer** (« objets » qu'on place au lieu de sculpter), en petits boutons tout en bas.
+- **Réglages, à droite** : taille et force propres à chaque outil, 3 tailles rapides, **symétrie** (l'icône montre la symétrie choisie : un point,
+  deux points de part et d'autre d'un axe, quatre points, étoile à six points), 8 couleurs, « Toute la forme » (plus haut / bas / large / fin, tout lisser).
+- **Boutons colorés** : chaque famille de boutons a sa couleur (barre du haut, navigation, outils) pour s'y repérer d'un coup d'œil.
+- En portrait, la navigation devient une carte en haut à gauche et les outils une grille en bas.
+
+## Raccourcis clavier
+| Touche | Effet |
+|---|---|
+| **Maj** (maintenue) | lisser, avec n'importe quel outil |
+| **Ctrl** (maintenue) | faire l'inverse : ajouter ↔ enlever, brosse ↔ sillon, gonfler ↔ dégonfler, pincer ↔ écarter, pousser à l'envers |
+| **Alt** + glisser | déplacer la vue |
+| **Espace** + glisser | tourner la vue |
+| flèches ou **Q Z S D** | tourner la caméra ; avec **Maj** : déplacer la vue |
+| `+` `-` (ou PageHaut / PageBas), **H** | zoom, vue de départ |
+| `1` à `7`, `8` | outils ; `8` ouvre / ferme le menu des pinceaux |
+| **F**, **X** | choisir une forme ; changer de symétrie |
+| `[` `]`, Ctrl+Z / Ctrl+Y, Échap, Entrée | taille du pinceau, annuler / refaire, fermer / annuler le placement, valider le placement |
+
+Le curseur et la surbrillance de l'outil changent pendant que Maj ou Ctrl sont tenues. Souris : clic droit ou bouton du stylet = tourner,
+molette = zoom, bouton du milieu = déplacer.
 
 ## Les outils
 | Outil | Geste |
 |---|---|
 | Ajouter (1) | glisser sur l'argile ou le plateau : l'épaisseur déposée suit la force (de très léger à épais). **Ajout propre** : la matière n'est déposée que sur de l'argile existante, rien ne dépasse derrière une partie fine, au-delà d'un bord, ni dans le vide (copies de la symétrie) ; un trait reste sur la surface où il a commencé (sculpture ou plateau) |
 | Enlever (2) | gratte / creuse (même échelle de force) |
-| Étirer (3) | attrape la matière et l'étire comme de la pâte (volume conservé) |
+| Élastique (3) | attrape la matière et la tire comme un élastique, même très loin. La sculpture d'avant le geste n'est rééchantillonnée **qu'une seule fois** (les petits pas sont composés dans une carte de déformation) : les détails fins ne sont plus détruits, il ne reste pas de morceaux détachés en l'air et il n'y a plus de lissage final de la zone. Le pied reste ancré au plateau |
 | Tirer (4) | fait sortir une corne, une queue (s'effile en s'allongeant) |
 | Lisser (5) | arrondit et adoucit |
 | Aplatir (6) | rabote ce qui dépasse d'un plan |
 | Tampon (7) | 11 motifs (boule, cube, cône, cœur, étoile, fleur, patte, lune, goutte, diamant, anneau) orientés selon la surface. **Rester appuyé et glisser règle la taille** (aperçu translucide + taille en cm) ; le bouton « Série » colle plusieurs tampons le long du geste |
 | Formes | 13 formes simples + toutes les formes de départ (voir plus bas) : **un clic sur la forme la pose** (visible en transparence, même cachée dans l'argile). **Le survol ne la déplace jamais** : on touche l'endroit où la poser (ou on la glisse ; au-delà du bord du plateau elle va au bord le plus proche), on change taille / rotation 3 axes / hauteur, « Coller » ou « Creuser », puis **Poser** (ou Entrée). Avec la symétrie, la copie « miroir » est montrée en transparence ; elle est active par défaut pour un objet posé sur la sculpture, inactive sur le plateau, et le bouton « Miroir » reprend la main. Pendant le placement, les outils sont masqués pour laisser la place à la scène |
 | Importer | fichier STL ou OBJ (bouton ou glisser-déposer), même placement que les formes |
-| Tourner (8) | un doigt = orbite, deux doigts = zoom + déplacement, double-touche = on s'approche |
+| Pinceaux (8) | menu en bas de l'écran : **Brosse** (fine couche régulière), **Gonfler** (la surface avance le long de sa normale), **Pincer** (la matière se rassemble et monte : arête, pli), **Pousser** (déplace la matière dans le sens du geste), **Sillon** (trait fin creusé), **Combler** (remplit creux et trous sans toucher aux bosses). Ils ont chacun leur taille et leur force, la symétrie, le stylet et Ctrl (inverse) |
+| Navigation | un doigt sur le fond = orbite, deux doigts = zoom + déplacement, double-touche = on s'approche |
 
 **Pas de traînées dans la perspective.** Un trait ne peut pas « sauter » en profondeur (par exemple du bord de la sculpture au plateau
 lointain) : chaque point est comparé au précédent (déplacement dans l'espace ≤ ~4 × ce que le doigt a parcouru à l'écran), le trait reste dans
@@ -47,7 +66,7 @@ le geste du premier est annulé (sans entrer dans l'historique).
 
 **Stylet** : à pression moyenne il se comporte exactement comme la souris ; la pression module ensuite la **force** (par défaut), la **taille**,
 les deux ou rien (Options). Une paume posée juste après le stylet est ignorée, le bouton latéral du stylet fait tourner la vue, la gomme enlève.
-Le curseur (anneau + bille) apparaît au survol.
+Le curseur apparaît au survol : une bille translucide (le pinceau) et un **anneau posé sur la surface, orienté selon sa normale**, à la taille de l'empreinte.
 
 ## Formes de départ (bouton « Nouveau »)
 30 formes classées en Bases (boule, œuf, plaque), Personnages (bonhomme de neige, personnage entier avec pieds, robot), Animaux (chat,
@@ -113,7 +132,11 @@ Mesures (Chromium, 1024×768, rendu réel, gestes synthétiques de 60 événemen
   Le téléchargement n'est actif que si le test passe. Formats : STL binaire (Z vers le haut, posé à z = 0) et OBJ, à 3 / 5 / 8 / 12 cm.
 
 ## Options (icône en haut)
-Zone de travail · taille de l'interface · place des outils · résolution (Éco / Normale / Fine) · affichage (Éco : sans ombre, 1× / Normal /
+Tous les réglages sont **mémorisés sur l'ordinateur** et retrouvés à chaque ouverture ou rafraîchissement (plateau, résolution, affichage, symétrie,
+stylet, etc.) ; ce sont eux qui font foi : si la sculpture enregistrée a une autre grille, elle est rééchantillonnée pour les respecter.
+**Performances** : quatre préréglages (Très faible / Faible / Normal / Élevé) règlent d'un coup résolution (jusqu'à 40 voxels), affichage,
+netteté de l'image et maillage d'export ; chaque option reste réglable ensuite. **Plateau** : 10 / 15 / 20 cm ou **taille libre de 6 à 40 cm**
+(la finesse affichée dépend de la grille). Zone de travail · taille de l'interface · place des outils · résolution (Éco / Normale / Fine) · affichage (Éco : sans ombre, 1× / Normal /
 Réaliste) · stylet (la pression change : rien / la force / la taille / les deux) · maillage d'export par défaut. Valeurs par défaut « Éco »
 sur les appareils modestes (≤ 2 Go ou ≤ 2 cœurs).
 

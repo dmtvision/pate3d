@@ -7,7 +7,7 @@ self.THREE = {
   Group: function () { this.add = function () {}; this.remove = function () {}; },
   MeshStandardMaterial: function () { this.color = { setHex: function () {} }; this.dispose = function () {}; }
 };
-importScripts('clay.js?v=30');
+importScripts('clay.js?v=34');
 
 self.onmessage = function (e) {
   const d = e.data;

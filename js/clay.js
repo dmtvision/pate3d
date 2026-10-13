@@ -20,6 +20,26 @@
   }
 
   /* ---------------------------------------------------------------- Échantillonnage */
+  /** Interpolation trilinéaire d'une carte à 3 composantes par voxel ; le résultat est écrit dans out[0..2] */
+  const _mo = [0, 0, 0];
+  function sampleMap(m, x, y, z, out) {
+    if (x < 0) x = 0; else if (x > N - 1) x = N - 1;
+    if (y < 0) y = 0; else if (y > N - 1) y = N - 1;
+    if (z < 0) z = 0; else if (z > N - 1) z = N - 1;
+    let i = x | 0, j = y | 0, k = z | 0;
+    if (i > N - 2) i = N - 2;
+    if (j > N - 2) j = N - 2;
+    if (k > N - 2) k = N - 2;
+    const fx = x - i, fy = y - j, fz = z - k, b = (i + j * N + k * N2) * 3, sN = N * 3, sN2 = N2 * 3;
+    for (let c = 0; c < 3; c++) {
+      const o = b + c;
+      const c00 = m[o] * (1 - fx) + m[o + 3] * fx;
+      const c10 = m[o + sN] * (1 - fx) + m[o + sN + 3] * fx;
+      const c01 = m[o + sN2] * (1 - fx) + m[o + sN2 + 3] * fx;
+      const c11 = m[o + sN + sN2] * (1 - fx) + m[o + sN + sN2 + 3] * fx;
+      out[c] = (c00 * (1 - fy) + c10 * fy) * (1 - fz) + (c01 * (1 - fy) + c11 * fy) * fz;
+    }
+  }
   function sample(f, x, y, z) {
     if (x < 0) x = 0; else if (x > N - 1) x = N - 1;
     if (y < 0) y = 0; else if (y > N - 1) y = N - 1;
@@ -527,6 +547,7 @@
       if (!this._sh || this._sh.length !== N3) this._sh = this.f.slice();   // seule recopie complète : la première fois
       this.before = this._sh;
       this.box = null;
+      this._mapZero();
     }
     _grow(x0, y0, z0, x1, y1, z1) {
       const b = this.box;
@@ -584,6 +605,7 @@
     endEdit() {
       const b = this.box;
       this.box = null;
+      this._mapZero();
       if (!b) { this.before = null; return null; }
       const entry = { box: b, before: this._crop(this._sh, b), after: this._crop(this.f, b) };
       this._syncShadow(b);
@@ -666,7 +688,7 @@
     }
 
     /** Lissage local (flou) */
-    smooth(cx, cy, cz, r, strength) {
+    smooth(cx, cy, cz, r, strength, fillOnly) {
       const f = this.f;
       const gx = (cx + HALF) / H, gy = (cy + FLOOR_Y) / H, gz = (cz + HALF) / H;
       const R = r / H;
@@ -688,7 +710,8 @@
             const v = f[idx];
             if (q >= 1) { tmp[o] = v; continue; }
             const avg = (f[idx - 1] + f[idx + 1] + f[idx - N] + f[idx + N] + f[idx - N2] + f[idx + N2]) / 6;
-            tmp[o] = v + strength * (1 - q) * (avg - v);
+            const nv = v + strength * (1 - q) * (avg - v);
+            tmp[o] = fillOnly && nv < v ? v : nv;      // « combler » : on ne retire jamais de matière
           }
       o = 0;
       for (let k = z0; k <= z1; k++)
@@ -702,42 +725,118 @@
       this._grow(x0, y0, z0, x1, y1, z1);
     }
 
-    /** Déplace la matière autour d'un point (déformation douce, comme de la pâte qu'on étire).
-     *  (cx,cy,cz) : position précédente du doigt, (dx,dy,dz) : déplacement, r : rayon (monde). */
-    grab(cx, cy, cz, dx, dy, dz, r) {
-      const f = this.f;
-      if (!this._src || this._src.length !== N3) { this._src = new Float32Array(N3); this._src.set(f); }
-      const src = this._src;
-      const mx = (cx + dx / 2 + HALF) / H, my = (cy + dy / 2 + FLOOR_Y) / H, mz = (cz + dz / 2 + HALF) / H;
-      const gx = dx / H, gy = dy / H, gz = dz / H;
+    /* ---- déformations « élastiques » (élastique, pincer, pousser) ----
+     * Chaque petit pas de déformation est composé dans une carte (déplacement de la position source, par voxel) puis la
+     * sculpture D'AVANT le geste est rééchantillonnée UNE seule fois avec la carte cumulée : le flou ne s'accumule plus,
+     * les petits détails survivent aux longs étirements et la matière reste d'un seul tenant. */
+    _mapZero() {
+      const b = this._mapBox, m = this._map;
+      this._mapBox = null;
+      if (!m || !b) return;
+      const w = (b.x1 - b.x0 + 1) * 3;
+      for (let k = b.z0; k <= b.z1; k++)
+        for (let j = b.y0; j <= b.y1; j++) m.fill(0, (b.x0 + j * N + k * N2) * 3, (b.x0 + j * N + k * N2) * 3 + w);
+    }
+    /** kind 0 : déplacement (p0..p2 en mm) ; kind 1 : pincement vers (cx,cy,cz), n = (p0,p1,p2), p3 = intensité (négative : écarte) */
+    _warp(kind, cx, cy, cz, r, p0, p1, p2, p3) {
+      const f = this.f, bf = this.before || this._sh || f;
+      if (!this._map || this._map.length !== N3 * 3) { this._map = new Float32Array(N3 * 3); this._mapBox = null; }
+      const map = this._map;
+      const gx = (cx + HALF) / H, gy = (cy + FLOOR_Y) / H, gz = (cz + HALF) / H;
       const R = r / H, R2 = R * R;
-      const x0 = Math.max(1, Math.floor(mx - R)), x1 = Math.min(N - 2, Math.ceil(mx + R));
-      const y0 = Math.max(FK, Math.floor(my - R)), y1 = Math.min(N - 2, Math.ceil(my + R));
-      const z0 = Math.max(1, Math.floor(mz - R)), z1 = Math.min(N - 2, Math.ceil(mz + R));
+      const x0 = Math.max(1, Math.floor(gx - R)), x1 = Math.min(N - 2, Math.ceil(gx + R));
+      const y0 = Math.max(FK, Math.floor(gy - R)), y1 = Math.min(N - 2, Math.ceil(gy + R));
+      const z0 = Math.max(1, Math.floor(gz - R)), z1 = Math.min(N - 2, Math.ceil(gz + R));
       if (x0 > x1 || y0 > y1 || z0 > z1) return;
-      // copie de la seule zone utile (+ marge) dans le tampon source
-      {
-        const mg = Math.ceil(Math.hypot(gx, gy, gz)) + 3;
-        const sx0 = Math.max(0, x0 - mg), sx1 = Math.min(N - 1, x1 + mg);
-        for (let k = Math.max(0, z0 - mg); k <= Math.min(N - 1, z1 + mg); k++)
-          for (let j = Math.max(0, y0 - mg); j <= Math.min(N - 1, y1 + mg); j++) {
-            const o = sx0 + j * N + k * N2;
-            src.set(f.subarray(o, o + sx1 - sx0 + 1), o);
+      const cnt = (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+      if (!this._wu || this._wu.length < cnt * 3) { this._wu = new Float32Array(cnt * 3); this._wv = new Float32Array(cnt); }
+      const tu = this._wu, tv = this._wv, mo = _mo;
+      const Dx = kind === 0 ? p0 / H : 0, Dy = kind === 0 ? p1 / H : 0, Dz = kind === 0 ? p2 / H : 0;
+      let o = 0;
+      for (let k = z0; k <= z1; k++)
+        for (let j = y0; j <= y1; j++)
+          for (let i = x0; i <= x1; i++, o++) {
+            const ex = i - gx, ey = j - gy, ez = k - gz;
+            const q = (ex * ex + ey * ey + ez * ez) / R2;
+            if (q >= 1) { tv[o] = -1; continue; }
+            let ux, uy, uz;
+            if (kind === 0) {                       // inverse approchée de x -> x + D·w : deux itérations de point fixe
+              let yx = i, yy = j, yz = k, wy = (1 - q) * (1 - q);
+              for (let it = 0; it < 2; it++) {
+                yx = i - Dx * wy; yy = j - Dy * wy; yz = k - Dz * wy;
+                const fx = yx - gx, fy = yy - gy, fz = yz - gz, qy = (fx * fx + fy * fy + fz * fz) / R2;
+                wy = qy < 1 ? (1 - qy) * (1 - qy) : 0;
+              }
+              ux = -Dx * wy; uy = -Dy * wy; uz = -Dz * wy;
+            } else {                                // pincement : on prélève plus loin dans le plan de la surface
+              const w = (1 - q) * (1 - q), dn = ex * p0 + ey * p1 + ez * p2, lift = p3 * 0.5 * R * w;   // la matière se rassemble ET monte : une arête
+              ux = p3 * w * (ex - dn * p0) - lift * p0; uy = p3 * w * (ey - dn * p1) - lift * p1; uz = p3 * w * (ez - dn * p2) - lift * p2;
+            }
+            sampleMap(map, i + ux, j + uy, k + uz, mo);          // carte cumulée à la position source de ce pas
+            const vx = ux + mo[0], vy = uy + mo[1], vz = uz + mo[2];
+            tu[o * 3] = vx; tu[o * 3 + 1] = vy; tu[o * 3 + 2] = vz;
+            let sy = j + vy; if (sy < FK) sy = FK;               // on ne puise jamais sous le plateau
+            tv[o] = sample(bf, i + vx, sy, k + vz);
           }
-      }
-      for (let k = z0; k <= z1; k++) {
+      o = 0;
+      for (let k = z0; k <= z1; k++)
         for (let j = y0; j <= y1; j++) {
           let idx = x0 + j * N + k * N2;
-          for (let i = x0; i <= x1; i++, idx++) {
-            const ex = i - mx, ey = j - my, ez = k - mz;
-            const q = (ex * ex + ey * ey + ez * ez) / R2;
-            if (q >= 1) continue;
-            const w = (1 - q) * (1 - q);
-            let v = sample(src, i - gx * w, j - gy * w, k - gz * w);
-            if (j === FK && v >= ISO) v = 1;
-            f[idx] = v;
+          for (let i = x0; i <= x1; i++, idx++, o++) {
+            const v = tv[o];
+            if (v < 0) continue;
+            map[idx * 3] = tu[o * 3]; map[idx * 3 + 1] = tu[o * 3 + 1]; map[idx * 3 + 2] = tu[o * 3 + 2];
+            f[idx] = (j === FK && v >= ISO) ? 1 : v;
           }
         }
+      const mb = this._mapBox;
+      if (!mb) this._mapBox = { x0, y0, z0, x1, y1, z1 };
+      else {
+        if (x0 < mb.x0) mb.x0 = x0; if (y0 < mb.y0) mb.y0 = y0; if (z0 < mb.z0) mb.z0 = z0;
+        if (x1 > mb.x1) mb.x1 = x1; if (y1 > mb.y1) mb.y1 = y1; if (z1 > mb.z1) mb.z1 = z1;
+      }
+      this._grow(x0, y0, z0, x1, y1, z1);
+    }
+    /** Déplace la matière autour de (cx,cy,cz) de (dx,dy,dz) mm, avec un rayon r (mm) : élastique, pousser */
+    warpGrab(cx, cy, cz, dx, dy, dz, r) { this._warp(0, cx, cy, cz, r, dx, dy, dz, 0); }
+    /** Pince la matière vers le point (cx,cy,cz) dans le plan de normale n ; amount négatif : écarte */
+    warpPinch(cx, cy, cz, nx, ny, nz, r, amount) { this._warp(1, cx, cy, cz, r, nx, ny, nz, amount); }
+
+    /** Gonfle (amount > 0, mm) ou dégonfle (< 0) la surface autour d'un point : elle avance le long de sa normale. */
+    inflate(cx, cy, cz, r, amount) {
+      const f = this.f;
+      const gx = (cx + HALF) / H, gy = (cy + FLOOR_Y) / H, gz = (cz + HALF) / H;
+      const R = r / H, R2 = R * R;
+      const x0 = Math.max(2, Math.floor(gx - R) - 1), x1 = Math.min(N - 3, Math.ceil(gx + R) + 1);
+      const y0 = Math.max(FK + 1, Math.floor(gy - R) - 1), y1 = Math.min(N - 3, Math.ceil(gy + R) + 1);
+      const z0 = Math.max(2, Math.floor(gz - R) - 1), z1 = Math.min(N - 3, Math.ceil(gz + R) + 1);
+      if (x0 > x1 || y0 > y1 || z0 > z1) return;
+      const steps = Math.max(1, Math.ceil(Math.abs(amount) / H / 0.45)), s = amount / H / steps;
+      const cnt = (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+      if (!this._tmp || this._tmp.length < cnt) this._tmp = new Float32Array(cnt);
+      const tmp = this._tmp;
+      for (let st = 0; st < steps; st++) {
+        let o = 0;
+        for (let k = z0; k <= z1; k++)
+          for (let j = y0; j <= y1; j++) {
+            let idx = x0 + j * N + k * N2;
+            for (let i = x0; i <= x1; i++, idx++, o++) {
+              const ex = i - gx, ey = j - gy, ez = k - gz, q = (ex * ex + ey * ey + ez * ez) / R2;
+              const v = f[idx];
+              if (q >= 1) { tmp[o] = v; continue; }
+              const gxx = f[idx + 1] - f[idx - 1], gyy = f[idx + N] - f[idx - N], gzz = f[idx + N2] - f[idx - N2];
+              const gl = Math.sqrt(gxx * gxx + gyy * gyy + gzz * gzz);
+              if (gl < 1e-3) { tmp[o] = v; continue; }
+              const w = (1 - q) * (1 - q) * s / gl;       // la surface avance de s·w voxels le long de la normale (−∇f)
+              tmp[o] = sample(f, i + gxx * w, j + gyy * w, k + gzz * w);
+            }
+          }
+        o = 0;
+        for (let k = z0; k <= z1; k++)
+          for (let j = y0; j <= y1; j++) {
+            let idx = x0 + j * N + k * N2;
+            for (let i = x0; i <= x1; i++, idx++, o++) f[idx] = tmp[o];
+          }
       }
       this._grow(x0, y0, z0, x1, y1, z1);
     }
@@ -1064,7 +1163,7 @@
     _applyGrid(field, n, lw) {
       configure(n, lw);
       this.f = field;
-      this._src = this._sh = this._tmp = this._acc = null;
+      this._src = this._sh = this._tmp = this._acc = this._map = this._mapBox = this._wu = this._wv = null;
       this.before = null;
       this.box = null;
       for (const m of this.chunks) if (m) { this.group.remove(m); m.geometry.dispose(); }

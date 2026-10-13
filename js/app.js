@@ -21,26 +21,12 @@
   const syncWorld = () => { const g = ClayEngine.grid(); WL = g.L; WH = g.HALF; };
   const gridSizeFor = (lw, res) => clamp(Math.round(lw / (100 / (res - 1))) + 1, 40, 160);
 
-  /* ------------------------------------------------------------------ Rendu */
-  const canvas = $('#gl');
-  let renderer;
-  try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: (window.devicePixelRatio || 1) < 1.75, alpha: true, powerPreference: 'low-power' });
-  } catch (err) {
-    $('#nogl').hidden = false;
-    return;
-  }
-  canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
-  canvas.addEventListener('webglcontextrestored', () => { clay.markAll(); invalidate(); });
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(40, 1, 5, 1200);
-
-  /* ---- options générales (mémorisées) ---- */
+  /* ---- options générales (mémorisées sur l'ordinateur : retrouvées à chaque ouverture) ---- */
   const lowEnd = (navigator.deviceMemory && navigator.deviceMemory <= 2) || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
   const opts = {
     res: lowEnd ? 56 : 80, world: 100, display: lowEnd ? 'eco' : 'norm', penMode: 'force', exportQ: 'dense',
-    ui: 1, side: 'left', sideOpen: true, sideOpenP: false, navOpen: true, stampSeries: false
+    ui: 1, side: 'left', sideOpen: true, sideOpenP: false, navOpen: true, stampSeries: false,
+    sharp: 1, perf: lowEnd ? 'low' : 'mid', sym: 'x', stamp: 'star'
   };
   try {
     const saved = JSON.parse(localStorage.getItem('pate3d.opts') || '{}');
@@ -50,7 +36,28 @@
   } catch (e) { /* ignore */ }
   delete opts.pen;
   if (['off', 'force', 'size', 'both'].indexOf(opts.penMode) < 0) opts.penMode = 'force';
+  if (![40, 56, 80, 112].includes(+opts.res)) opts.res = 80;
+  opts.res = +opts.res;
+  opts.world = Number.isFinite(+opts.world) && +opts.world >= 60 && +opts.world <= 400 ? +opts.world : 100;
+  if (![0.6, 1, 1.4].includes(+opts.sharp)) opts.sharp = 1;
+  opts.sharp = +opts.sharp;
+  if (['off', 'x', 'xz', 'rot6'].indexOf(opts.sym) < 0) opts.sym = 'x';
   const saveOpts = () => { try { localStorage.setItem('pate3d.opts', JSON.stringify(opts)); } catch (e) { /* ignore */ } };
+
+  /* ------------------------------------------------------------------ Rendu */
+  const canvas = $('#gl');
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: (window.devicePixelRatio || 1) < 1.75 && opts.perf !== 'min', alpha: true, powerPreference: 'low-power' });
+  } catch (err) {
+    $('#nogl').hidden = false;
+    return;
+  }
+  canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
+  canvas.addEventListener('webglcontextrestored', () => { clay.markAll(); invalidate(); });
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(40, 1, 5, 1200);
 
   /* ---- textures procédurales (aucun fichier à charger) ---- */
   /** « Matcap » argile : l'éclairage est cuit dans l'image, donc 1 seule lecture de texture par pixel (très léger) */
@@ -199,7 +206,7 @@
     shadowDirty = true;
   }
 
-  /* ---- curseur de pinceau : bille translucide + anneau toujours tourné vers l'écran ---- */
+  /* ---- curseur de pinceau : bille translucide + anneau posé sur la surface (orienté selon sa normale) ---- */
   const cursorMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, transparent: true, opacity: 0.2, depthWrite: false });
   const ringMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, transparent: true, opacity: 0.95, depthTest: false, side: THREE.DoubleSide });
   const sphereGeo = new THREE.SphereGeometry(1, 20, 14), ringGeo = new THREE.RingGeometry(0.86, 1, 48);
@@ -259,15 +266,11 @@
       if (q.right - rc.left < w / 2) l = Math.max(l, q.right - rc.left);
       else if (q.left - rc.left > w / 2) r = Math.min(r, q.left - rc.left);
     }
-    const sbar = $('#stamp-bar');                // la barre des tampons (en bas) : la sculpture se recentre au-dessus
-    if (sbar && !sbar.hidden && sbar.offsetParent !== null) {
-      const sq = sbar.getBoundingClientRect();
-      if (sq.top - rc.top > h * 0.4) b = Math.min(b, sq.top - rc.top);
-    }
-    const nav = $('#nav');                       // la carte de navigation ne couvre qu'un coin : on décale la sculpture de moitié
-    if (!portrait && nav && nav.offsetParent !== null) {
-      const nr = nav.getBoundingClientRect().right - rc.left;
-      if (nr > l && nr < w / 2 + 0.2 * w) l += 0.5 * (nr - l);
+    for (const sbar of [$('#stamp-bar'), $('#brush-bar')]) {   // barres du bas (tampons, pinceaux) : la sculpture se recentre au-dessus
+      if (sbar && !sbar.hidden && sbar.offsetParent !== null) {
+        const sq = sbar.getBoundingClientRect();
+        if (sq.top - rc.top > h * 0.4) b = Math.min(b, sq.top - rc.top);
+      }
     }
     const dx = (l + r) / 2 - w / 2, dy = (t + b) / 2 - h / 2;
     freeC.x = (l + r) / 2; freeC.y = (t + b) / 2;
@@ -293,7 +296,10 @@
   // résolution adaptative : si l'appareil rame, on baisse la netteté, puis on la remonte quand ça va mieux
   const PR_MIN = 0.75;
   let prBase = 1, pr = 1, ema = 16, goodFrames = 0, lastNow = 0, lastPr = 0;
-  function basePixelRatio() { return opts.display === 'eco' ? 1 : Math.min(window.devicePixelRatio || 1, 1.5); }
+  function basePixelRatio() {
+    const dpr = Math.max(window.devicePixelRatio || 1, 1), cap = opts.display === 'eco' ? 1 : 1.5;
+    return clamp(Math.min(dpr, cap) * (opts.sharp || 1), 0.5, dpr * 1.5);
+  }
   function setPixelRatio(v, now) {
     pr = v; lastPr = now || 0; ema = 16; goodFrames = 0;
     renderer.setPixelRatio(pr);
@@ -333,7 +339,7 @@
       else if (now - shadowT > 120) { shadowT = now; shadowDirty = false; updateShadow(); }
       else setTimeout(invalidate, 130);
     }
-    for (const cu of cursors) if (cu.visible) cu.children[1].quaternion.copy(camera.quaternion);
+    for (const cu of cursors) if (cu.visible && !cu.userData.n) cu.children[1].quaternion.copy(camera.quaternion);
     renderer.render(scene, camera);
     const key = view.az.toFixed(4) + view.el.toFixed(4) + gizmo.width;
     if (key !== gizmoKey) { gizmoKey = key; drawGizmo(); }
@@ -366,7 +372,9 @@
 
   /* taille (rayon, mm) et force (0-1) propres à chaque outil */
   const toolSet = {};
-  ['add', 'remove', 'pull', 'stretch', 'flatten', 'smooth', 'stamp'].forEach((t) => { toolSet[t] = { size: t === 'stretch' || t === 'stamp' ? 8 : 7, force: 0.5 }; });
+  ['add', 'remove', 'pull', 'stretch', 'flatten', 'smooth', 'stamp', 'layer', 'inflate', 'pinch', 'nudge', 'groove', 'fill'].forEach((t) => {
+    toolSet[t] = { size: ['stretch', 'stamp', 'layer', 'nudge'].includes(t) ? 8 : 7, force: 0.5 };
+  });
   try {
     const sv = JSON.parse(localStorage.getItem('pate3d.tools') || '{}');
     Object.keys(toolSet).forEach((t) => { if (sv[t]) Object.assign(toolSet[t], sv[t]); });
@@ -390,18 +398,65 @@
   const F = (t) => clamp(setOf(t).force * curForceMul, 0.05, 1);
   const brushR = (t) => setOf(t || (stroke ? stroke.tool : tool)).size * curPressure;
 
-  const CURSOR_COLORS = { add: 0x22c55e, remove: 0xef4444, pull: 0x3b82f6, smooth: 0xeab308, stamp: 0xf97316, stretch: 0x06b6d4, flatten: 0x84cc16, orbit: 0x000000 };
-  const TOOL_INFO = {
-    add: ['Ajouter', 'Pose de la matière : touche et glisse. La force règle l’épaisseur.', '#22c55e', '#e4f7ea', '#15803d'],
-    remove: ['Enlever', 'Gratte et creuse la matière.', '#ef4444', '#fde9e9', '#b91c1c'],
-    stretch: ['Étirer', 'Attrape et tire la pâte : elle suit ton doigt.', '#06b6d4', '#dff6fb', '#0e7490'],
-    pull: ['Tirer', 'Fait sortir une pointe, une corne, une queue.', '#3b82f6', '#e6effe', '#1d4ed8'],
-    smooth: ['Lisser', 'Arrondit et adoucit les bosses.', '#eab308', '#fdf5d6', '#a16207'],
-    flatten: ['Aplatir', 'Rabote pour obtenir une surface plate.', '#84cc16', '#eef8d9', '#4d7c0f'],
-    stamp: ['Tampon', 'Touche pour coller. Reste appuyé et glisse pour choisir la taille.', '#f97316', '#feebdc', '#c2410c'],
-    orbit: ['Tourner', 'Glisse pour faire le tour de ta sculpture.', '#8b5cf6', '#ede8fe', '#6d28d9']
+  const CURSOR_COLORS = {
+    add: 0x22c55e, remove: 0xef4444, pull: 0x3b82f6, smooth: 0xeab308, stamp: 0xf97316, stretch: 0x06b6d4, flatten: 0x84cc16,
+    layer: 0xd97706, inflate: 0xec4899, pinch: 0x8b5cf6, nudge: 0x0ea5e9, groove: 0x64748b, fill: 0x14b8a6, orbit: 0x000000
   };
-  const TOOL_KEYS = ['add', 'remove', 'stretch', 'pull', 'smooth', 'flatten', 'stamp', 'orbit'];
+  const TOOL_INFO = {
+    add: ['Ajouter', 'pose de la matière, la force règle l’épaisseur. Ctrl : enlever.'],
+    remove: ['Enlever', 'gratte et creuse la matière. Ctrl : ajouter.'],
+    stretch: ['Élastique', 'attrape la pâte et tire-la comme un élastique : elle suit ton doigt, même très loin.'],
+    pull: ['Tirer', 'fait sortir une pointe, une corne, une queue.'],
+    smooth: ['Lisser', 'arrondit et adoucit les bosses. Astuce : maintiens Maj avec n’importe quel outil.'],
+    flatten: ['Aplatir', 'rabote pour obtenir une surface plate.'],
+    stamp: ['Tampon', 'touche pour coller. Reste appuyé et glisse pour choisir la taille.'],
+    layer: ['Brosse', 'peint une fine couche d’argile bien régulière. Ctrl : sillon.'],
+    inflate: ['Gonfler', 'gonfle la surface comme un ballon. Ctrl : dégonfler.'],
+    pinch: ['Pincer', 'pince la matière pour faire une arête ou un pli. Ctrl : écarter.'],
+    nudge: ['Pousser', 'pousse la matière dans le sens de ton geste. Ctrl : à l’envers.'],
+    groove: ['Sillon', 'trace un sillon fin pour dessiner des lignes et des plis. Ctrl : brosse.'],
+    fill: ['Combler', 'remplit les trous et les creux sans toucher aux bosses.']
+  };
+  /* pinceaux supplémentaires (menu en bas de l'écran) */
+  const BRUSHES = [
+    { id: 'layer', icon: 'i-layer', c: '#d97706', cs: '#fdeccf', cd: '#b45309' },
+    { id: 'inflate', icon: 'i-inflate', c: '#ec4899', cs: '#fde6f2', cd: '#be185d' },
+    { id: 'pinch', icon: 'i-pinch', c: '#8b5cf6', cs: '#ede8fe', cd: '#6d28d9' },
+    { id: 'nudge', icon: 'i-nudge', c: '#0ea5e9', cs: '#dff1fb', cd: '#0369a1' },
+    { id: 'groove', icon: 'i-groove', c: '#64748b', cs: '#e5ebf3', cd: '#3b4d68' },
+    { id: 'fill', icon: 'i-fill', c: '#14b8a6', cs: '#d7f5ef', cd: '#0f766e' }
+  ];
+  const BRUSH_IDS = BRUSHES.map((b) => b.id);
+  const TOOL_KEYS = ['add', 'remove', 'stretch', 'pull', 'smooth', 'flatten', 'stamp'];
+  const brushBar = $('#brush-bar');
+  BRUSHES.forEach((b) => {
+    const el = document.createElement('button');
+    el.className = 'brush-btn'; el.dataset.tool = b.id;
+    el.style.setProperty('--c', b.c); el.style.setProperty('--cs', b.cs); el.style.setProperty('--cd', b.cd);
+    el.title = TOOL_INFO[b.id][0] + ' : ' + TOOL_INFO[b.id][1];
+    el.innerHTML = '<svg class="ic"><use href="#' + b.icon + '"/></svg><span>' + TOOL_INFO[b.id][0] + '</span>';
+    brushBar.appendChild(el);
+  });
+  let brushBarOpen = false;
+
+  /* modificateurs au clavier : Maj = lisser, Ctrl = faire l'inverse (ajouter ↔ enlever…), Alt + glisser = déplacer la vue,
+     Espace + glisser = tourner la vue */
+  const keyMods = { shift: false, ctrl: false, alt: false };
+  let spaceDown = false;
+  const readMods = (e) => ({ shift: !!e.shiftKey, ctrl: !!(e.ctrlKey || e.metaKey), alt: !!e.altKey });
+  const INVERSE = { add: 'remove', remove: 'add', layer: 'groove', groove: 'layer' };
+  /** Outil réellement utilisé : tient compte de Maj (lisser) et de Ctrl (inverse) ; inv = variante « à l'envers » (dégonfler, écarter…) */
+  function resolveTool(base, m) {
+    if (m && m.shift && base !== 'smooth') return { tool: 'smooth', inv: false };
+    if (m && m.ctrl) return INVERSE[base] ? { tool: INVERSE[base], inv: false } : { tool: base, inv: true };
+    return { tool: base, inv: false };
+  }
+  function syncToolHighlight() {
+    const shown = resolveTool(tool, keyMods).tool;
+    $$('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === shown));
+    $('#btn-brushes').classList.toggle('active', BRUSH_IDS.includes(shown));
+    $('#btn-brushes').classList.toggle('open', brushBarOpen);
+  }
 
   let hintTimer = 0;
   function setHint(txt) {
@@ -419,26 +474,38 @@
     toastTimer = setTimeout(() => { t.hidden = true; }, 3200);
   }
 
+  let cursorColorTool = '';
+  function setCursorColor(t) {
+    if (cursorColorTool === t) return;
+    cursorColorTool = t;
+    const c = CURSOR_COLORS[t] || 0x22c55e;
+    cursorMat.color.setHex(c); ringMat.color.setHex(c);
+  }
+  function setBrushBar(open) {
+    brushBarOpen = open;
+    brushBar.hidden = !open || !!placement;
+    syncToolHighlight();
+    updateViewOffset();
+    invalidate();
+  }
   function setTool(name) {
     if (stroke) endStroke();
     tool = name;
     const ti = TOOL_INFO[name];
-    if (ti) {
-      $('#ti-name').textContent = ti[0]; $('#ti-desc').textContent = ti[1];
-      const card = $('#tool-info');
-      card.style.setProperty('--c', ti[2]); card.style.setProperty('--cs', ti[3]); card.style.setProperty('--cd', ti[4]);
-      $('#ti-use').setAttribute('href', '#i-' + name);
-    }
-    $$('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === name));
-    cursorMat.color.setHex(CURSOR_COLORS[name]); ringMat.color.setHex(CURSOR_COLORS[name]);
+    if (ti) setHint(ti[0] + ' : ' + ti[1]);
+    brushBarOpen = BRUSH_IDS.includes(name);
+    setCursorColor(name);
     cursors.forEach((c) => { c.visible = false; });
     hideStampGhost(); hideSizeTip();
     $('#stamp-bar').hidden = name !== 'stamp' || !!placement;
+    brushBar.hidden = !brushBarOpen || !!placement;
+    syncToolHighlight();
     syncBrushUI();
     updateViewOffset();
     invalidate();
   }
   $$('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  $('#btn-brushes').addEventListener('click', () => setBrushBar(!brushBarOpen));
 
   const SIZE_PRESETS = [4, 7, 12];
   function syncBrushUI() {
@@ -459,19 +526,20 @@
   $('#brush-size').addEventListener('input', (e) => { if (tool !== 'orbit') { setOf(tool).size = +e.target.value; saveTools(); syncBrushUI(); } });
   $('#brush-force').addEventListener('input', (e) => { if (tool !== 'orbit') { setOf(tool).force = +e.target.value / 100; saveTools(); syncBrushUI(); } });
 
+  const SYM_ORDER = ['off', 'x', 'xz', 'rot6'];
   function setSym(m, announce) {
     sym = m;
     $('#btn-mirror').classList.toggle('on', m !== 'off');
     $('#sym-label').textContent = SYMS[m].label;
+    $('#sym-use').setAttribute('href', '#i-sym' + SYM_ORDER.indexOf(m));      // l'icône montre la symétrie choisie
     mirrorPlane.visible = SYMS[m].planes.includes(0);
     mirrorPlane2.visible = SYMS[m].planes.includes(1);
+    if (opts.sym !== m) { opts.sym = m; saveOpts(); }
     if (announce) setHint(m === 'off' ? 'Symétrie coupée : chaque geste ne se fait qu’une fois.' : 'Symétrie « ' + SYMS[m].label + ' » : ce que tu fais d’un côté se répète !');
     invalidate();
   }
-  $('#btn-mirror').addEventListener('click', () => {
-    const order = ['off', 'x', 'xz', 'rot6'];
-    setSym(order[(order.indexOf(sym) + 1) % order.length], true);
-  });
+  const cycleSym = () => setSym(SYM_ORDER[(SYM_ORDER.indexOf(sym) + 1) % SYM_ORDER.length], true);
+  $('#btn-mirror').addEventListener('click', cycleSym);
 
   /* couleurs (purement décoratives) */
   const COLORS = [0xf2a679, 0x7cb7ff, 0x6ee7a0, 0xf78fc0, 0xfde047, 0xfaf9f7, 0xb8a2fb, 0x4ee3cf];
@@ -525,30 +593,73 @@
   $('#btn-redo').addEventListener('click', redo);
 
   const modalOpen = () => $$('.modal').some((m) => !m.hidden && m.id !== 'nogl');
+  const isTyping = (t) => !!t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '');
+  let lastHover = null;
+  function refreshHover() {
+    if (lastHover && !stroke && !placement) {
+      hoverEvt = Object.assign({}, lastHover, { shiftKey: keyMods.shift, ctrlKey: keyMods.ctrl, altKey: keyMods.alt });
+      invalidate();
+    }
+  }
+  function setMods(e) {
+    const m = readMods(e);
+    if (m.shift !== keyMods.shift || m.ctrl !== keyMods.ctrl || m.alt !== keyMods.alt) {
+      Object.assign(keyMods, m);
+      syncToolHighlight();
+      refreshHover();
+    }
+  }
+  /* caméra au clavier : flèches ou Q Z S D (comme les boutons de rotation) ; avec Maj on déplace la vue */
+  const CAM_KEYS = { ArrowLeft: [1, 0], q: [1, 0], ArrowRight: [-1, 0], d: [-1, 0], ArrowUp: [0, 1], z: [0, 1], ArrowDown: [0, -1], s: [0, -1] };
   window.addEventListener('keydown', (e) => {
-    const typing = /TEXTAREA/.test((e.target || {}).tagName || '') || ((e.target || {}).type === 'text');
-    if (typing) return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    setMods(e);
+    if (e.key === 'Alt') e.preventDefault();                      // Alt seul ne doit pas activer le menu du navigateur
     if (e.key === 'Escape') { if (modalOpen()) closeModals(); else if (placement) cancelPlacement(); return; }
-    if (e.key === 'Enter' && placement && !modalOpen() && !/BUTTON|INPUT/.test((e.target || {}).tagName || '')) { validatePlacement(); return; }
+    if (isTyping(e.target)) return;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if ((e.ctrlKey || e.metaKey) && key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && key === 'y') { e.preventDefault(); redo(); return; }
+    if (e.code === 'Space' || key === ' ') { if (!modalOpen()) { e.preventDefault(); spaceDown = true; hideCursor(); } return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (key === 'Enter' && placement && !modalOpen() && !/BUTTON|INPUT/.test((e.target || {}).tagName || '')) { validatePlacement(); return; }
     if (modalOpen()) return;
-    if (/^[1-8]$/.test(e.key)) { setTool(TOOL_KEYS[+e.key - 1]); return; }
-    if (e.key === '+' || e.key === '=') { goTo({ dist: view.dist * 0.85 }); return; }
-    if (e.key === '-' || e.key === '_') { goTo({ dist: view.dist / 0.85 }); return; }
-    if ((e.key === '[' || e.key === ']') && tool !== 'orbit') {
+    if (/^[1-7]$/.test(key)) { setTool(TOOL_KEYS[+key - 1]); return; }
+    if (key === '8') { setBrushBar(!brushBarOpen); return; }
+    if (key === '+' || key === '=' || key === 'PageUp') { goTo({ dist: view.dist * 0.85 }); return; }
+    if (key === '-' || key === '_' || key === 'PageDown') { goTo({ dist: view.dist / 0.85 }); return; }
+    if (key === 'h') { goTo(Object.assign(defaultView(), { az: nearestAngle(view.az, 0) })); return; }
+    if (key === 'x') { cycleSym(); return; }
+    if (key === 'f') { if (!placement) openShapes(); return; }
+    const cm = CAM_KEYS[key];
+    if (cm) {
+      e.preventDefault();
+      if (e.shiftKey) { pan(-cm[0] * 30, -cm[1] * 30); invalidate(); }
+      else goTo({ az: view.az + cm[0] * 0.12, el: view.el + cm[1] * 0.08 });
+      return;
+    }
+    if ((key === '[' || key === ']') && tool !== 'orbit') {
       const st = setOf(tool);
-      st.size = clamp(st.size + (e.key === ']' ? 1 : -1), 2, 25);
+      st.size = clamp(st.size + (key === ']' ? 1 : -1), 2, 25);
       saveTools(); syncBrushUI();
     }
   });
+  window.addEventListener('keyup', (e) => {
+    setMods(e);
+    if (e.key === 'Alt') e.preventDefault();
+    if (e.code === 'Space' || e.key === ' ') spaceDown = false;
+  });
+  window.addEventListener('blur', () => { keyMods.shift = keyMods.ctrl = keyMods.alt = false; spaceDown = false; syncToolHighlight(); });
+  // les boutons et curseurs ne gardent pas le focus après un clic : Espace, flèches et Entrée restent pour la caméra et les gestes
+  document.addEventListener('click', (e) => { const b = e.detail && e.target.closest ? e.target.closest('button') : null; if (b) b.blur(); });
+  document.addEventListener('pointerup', (e) => { const t = e.target; if (t && t.tagName === 'INPUT' && t.type === 'range') setTimeout(() => t.blur(), 0); });
 
   /* sauvegarde automatique (aussi quand on quitte la page) */
-  let saveTimer = 0;
+  let saveTimer = 0, saveWarned = false;
   function saveNow() {
     clearTimeout(saveTimer); saveTimer = 0;
-    try { localStorage.setItem('pate3d.v3', clay.serialize()); } catch (e) { /* quota / mode privé */ }
+    try { localStorage.setItem('pate3d.v3', clay.serialize()); } catch (e) {
+      if (!saveWarned) { saveWarned = true; toast('Sauvegarde automatique impossible (espace plein ?) : exporte ton travail !'); }
+    }
   }
   function scheduleSave() {
     clearTimeout(saveTimer);
@@ -600,11 +711,11 @@
   const worldPerPx = (depth) => (2 * depth * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(canvas.clientHeight, 1);
 
   /* ------------------------------------------------------------------ Sculpture */
-  /** n = normale de la surface visée : l'ajout « propre » ne dépose de la matière que sur de l'argile existante
-   *  (rien derrière une partie fine, au-delà d'un bord, ni dans le vide pour les copies de la symétrie). */
-  function capsuleM(a, b, r, mode, hit) {
+  /** hit = point visé (avec sa normale) : l'ajout « propre » ne dépose de la matière que sur de l'argile existante
+   *  (rien derrière une partie fine, au-delà d'un bord, ni dans le vide pour les copies de la symétrie). k = épaisseur visée. */
+  function capsuleM(a, b, r, mode, hit, k) {
     const sup = hit && mode === 'add'
-      ? { nx: 0, ny: 0, nz: 0, depth: r * (addHeightK() + 0.45) + 1.5, below: 0.6 * r + 1.5, w0: hit.x * hit.nx + hit.y * hit.ny + hit.z * hit.nz }
+      ? { nx: 0, ny: 0, nz: 0, depth: r * ((k === undefined ? addHeightK() : k) + 0.45) + 1.5, below: 0.6 * r + 1.5, w0: hit.x * hit.nx + hit.y * hit.ny + hit.z * hit.nz }
       : null;
     for (const M of xfs()) {
       const pa = ap(M, a), pb = ap(M, b);
@@ -612,18 +723,35 @@
       clay.capsule(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], r, mode, sup);
     }
   }
-  function smoothM(c, r) {
-    const k = 0.15 + 0.8 * F('smooth');
-    for (const M of xfs()) { const q = ap(M, c); clay.smooth(q[0], q[1], q[2], r, k); }
+  function smoothM(c, r, fillOnly) {
+    const k = 0.15 + 0.8 * F(fillOnly ? 'fill' : 'smooth');
+    for (const M of xfs()) { const q = ap(M, c); clay.smooth(q[0], q[1], q[2], r, k, fillOnly); }
   }
-  function showCursor(c, r) {
+  function inflateM(c, r, amount) {
+    for (const M of xfs()) { const q = ap(M, c); clay.inflate(q[0], q[1], q[2], r, amount); }
+  }
+  function pinchM(c, n, r, alpha) {
+    for (const M of xfs()) { const q = ap(M, c), m = ap(M, n); clay.warpPinch(q[0], q[1], q[2], m[0], m[1], m[2], r, alpha); }
+  }
+  function grabM(c, d, r, gain) {
+    const m = gain === undefined ? 0.6 + 0.8 * F('stretch') : gain;
+    for (const M of xfs()) { const pc = ap(M, c), pd = ap(M, d); clay.warpGrab(pc[0], pc[1], pc[2], pd[0] * m, pd[1] * m, pd[2] * m, r); }
+  }
+  /** Curseur : bille translucide au centre du pinceau + anneau posé sur la surface (orienté selon sa normale n) :
+   *  ring = {p: point de contact, r: rayon de l'empreinte}. */
+  const Z_AXIS = new THREE.Vector3(0, 0, 1), nTmp = new THREE.Vector3();
+  function showCursor(c, r, n, ring) {
     const xs = xfs();
     for (let i = 0; i < cursors.length; i++) {
       const cu = cursors[i];
       if (i < xs.length && tool !== 'orbit') {
-        const q = ap(xs[i], c);
+        const q = ap(xs[i], c), rg = cu.children[1];
         cu.position.set(q[0], q[1], q[2]);
         cu.scale.setScalar(r);
+        if (ring) { const qp = ap(xs[i], ring.p); rg.position.set((qp[0] - q[0]) / r, (qp[1] - q[1]) / r, (qp[2] - q[2]) / r); rg.scale.setScalar(ring.r / r); }
+        else { rg.position.set(0, 0, 0); rg.scale.setScalar(1); }
+        if (n) { const m = ap(xs[i], n); nTmp.set(m[0], m[1], m[2]).normalize(); rg.quaternion.setFromUnitVectors(Z_AXIS, nTmp); cu.userData.n = true; }
+        else cu.userData.n = false;
         cu.visible = true;
       } else cu.visible = false;
     }
@@ -635,7 +763,11 @@
     if (any) invalidate();
   }
 
-  const allowed = (h, t) => !!h && h.c >= MIN_C && ((t || tool) === 'add' || (t || tool) === 'stamp' || !h.floor);
+  /* outils qui peuvent aussi travailler sur le plateau / qui visent la surface en cours de déformation / sans lissage final */
+  const FLOOR_OK = new Set(['add', 'layer', 'stamp']);
+  const ON_CURRENT = new Set(['smooth', 'fill', 'inflate', 'pinch', 'nudge']);
+  const NO_RELAX = new Set(['smooth', 'fill', 'stretch', 'pinch', 'nudge', 'inflate']);
+  const allowed = (h, t) => !!h && h.c >= MIN_C && (FLOOR_OK.has(t || tool) || !h.floor);
 
   /* --- tampons --- */
   const STAMPS = ['sphere', 'cube', 'cone', 'heart', 'star', 'flower', 'paw', 'moon', 'drop', 'diamond', 'torus'];
@@ -751,10 +883,10 @@
     return Math.hypot(h.x - prev.x, h.y - prev.y, h.z - prev.z) <= 4 * mv + 1.5 * ClayEngine.grid().H;
   }
 
-  function beginStroke(h, forced, e) {
+  function beginStroke(h, rt, e) {
     clay.beginEdit();
-    const t = forced || tool;
-    stroke = { tool: t, born: performance.now(), onFloor: !!h.floor, last: null, path: 0, t0: h.t, prevHit: h, span: Math.max(0.8 * WL, 8 * Math.max(brushR(t), 2)), lastPx: e ? [e.clientX, e.clientY] : null, lastT: e ? e.timeStamp : 0 };
+    const t = rt.tool;
+    stroke = { tool: t, inv: rt.inv, born: performance.now(), onFloor: !!h.floor, last: null, path: 0, t0: h.t, prevHit: h, span: Math.max(0.8 * WL, 8 * Math.max(brushR(t), 2)), lastPx: e ? [e.clientX, e.clientY] : null, lastT: e ? e.timeStamp : 0 };
     if (t === 'stamp') {
       if (opts.stampSeries) { const sz = stampSizeDefault(); stampPlace(h, sz); stroke.lastStamp = [h.x, h.y, h.z]; showStampGhost(h, sz); return; }
       stroke.stamp = { h, sx: e ? e.clientX : 0, sy: e ? e.clientY : 0, size: stampSizeDefault(), moved: false };
@@ -798,10 +930,6 @@
     }
   }
 
-  function grabM(c, d, r) {
-    const m = 0.6 + 0.8 * F('stretch');
-    for (const M of xfs()) { const pc = ap(M, c), pd = ap(M, d); clay.grab(pc[0], pc[1], pc[2], pd[0] * m, pd[1] * m, pd[2] * m, r); }
-  }
   function flattenM(c, pl, r) {
     for (const M of xfs()) {
       const pc = ap(M, c), pp = ap(M, [pl[0], pl[1], pl[2]]), pn = ap(M, [pl[3], pl[4], pl[5]]);
@@ -817,39 +945,82 @@
       for (let i = 1; i <= n; i++) flattenM([l[0] + dx * i / n, l[1] + dy * i / n, l[2] + dz * i / n], stroke.plane, R);
     }
     stroke.last = c;
-    showCursor(c, R);
+    showCursor(c, R, [h.nx, h.ny, h.nz]);
   }
 
   /* Épaisseur ajoutée / profondeur creusée par un geste (en fraction du rayon du pinceau) : la force part vraiment de « très léger ».
    * Le centre de la bille est posé sous (ajout) ou au-dessus (creusage) de la surface pour obtenir cette épaisseur. */
   const addHeightK = () => lerp(0.1, 1.15, F('add'));
+  const layerHeightK = () => lerp(0.05, 0.3, F('layer'));
   const removeDepthK = () => lerp(0.12, 1.15, F('remove'));
-  const addOff = () => addHeightK() - 1;
-  const removeOff = () => 1 - removeDepthK();
+  const grooveDepthK = () => lerp(0.3, 1.0, F('groove'));
+  const footprint = (R, k) => R * Math.sqrt(Math.max(0.12, 1 - Math.pow(1 - Math.min(k, 1), 2)));
+  /** Rayon d'action R, décalage du centre le long de la normale (en fraction de R) et rayon de l'empreinte sur la surface pour l'outil t */
+  function brushGeom(t) {
+    const R = brushR(t);
+    switch (t) {
+      case 'add': { const k = addHeightK(); return { R, off: k - 1, fr: footprint(R, k) }; }
+      case 'layer': { const k = layerHeightK(); return { R, off: k - 1, fr: footprint(R, k) }; }
+      case 'remove': { const k = removeDepthK(); return { R, off: 1 - k, fr: footprint(R, k) }; }
+      case 'groove': { const g = R * 0.4, k = grooveDepthK(); return { R: g, off: 1 - k, fr: footprint(g, k) }; }
+      case 'smooth': case 'flatten': case 'fill': return { R: R * 1.3, off: 0, fr: R * 1.3 };
+      case 'stretch': return { R: R * 1.4, off: 0, fr: R * 1.4 };
+      case 'inflate': case 'pinch': case 'nudge': return { R: R * 1.2, off: 0, fr: R * 1.2 };
+      default: return { R, off: 0, fr: R };
+    }
+  }
+  /** Applique fn le long du chemin parcouru depuis le dernier point (un pas tous les `step` mm) */
+  function alongPath(c, step, fn) {
+    const l = stroke.last;
+    if (!l) fn(c);
+    else {
+      const dx = c[0] - l[0], dy = c[1] - l[1], dz = c[2] - l[2];
+      const n = Math.max(1, Math.ceil(Math.hypot(dx, dy, dz) / step));
+      for (let i = 1; i <= n; i++) fn([l[0] + dx * i / n, l[1] + dy * i / n, l[2] + dz * i / n]);
+    }
+    stroke.last = c;
+  }
 
   function strokePoint(h, dt) {
-    const R = brushR();
-    if (stroke.tool === 'smooth') {
-      const c = [h.x, h.y, h.z], rr = R * 1.3;
-      if (!stroke.last) { smoothM(c, rr); Sfx.smooth(); }
-      else {
-        const dx = c[0] - stroke.last[0], dy = c[1] - stroke.last[1], dz = c[2] - stroke.last[2];
-        const len = Math.hypot(dx, dy, dz), n = Math.max(1, Math.ceil(len / (R * 0.4)));
-        for (let i = 1; i <= n; i++) smoothM([stroke.last[0] + dx * i / n, stroke.last[1] + dy * i / n, stroke.last[2] + dz * i / n], rr);
-      }
-      stroke.last = c;
-      showCursor(c, rr);
-    } else {
-      const off = stroke.tool === 'add' ? addOff() : removeOff();
-      let c = [h.x + h.nx * R * off, h.y + h.ny * R * off, h.z + h.nz * R * off];
+    const t = stroke.tool, g = brushGeom(t), R = brushR(t), c0 = [h.x, h.y, h.z], n0 = [h.nx, h.ny, h.nz];
+    const ring = { p: c0, r: g.fr };
+    if (t === 'smooth' || t === 'fill') {
+      if (!stroke.last) Sfx.smooth();
+      alongPath(c0, R * 0.4, (c) => smoothM(c, g.R, t === 'fill'));
+      showCursor(c0, g.R, n0, ring);
+    } else if (t === 'inflate') {
+      const amt = (stroke.inv ? -1 : 1) * R * (0.03 + 0.2 * F('inflate'));
+      if (!stroke.last) Sfx.smooth();
+      alongPath(c0, R * 0.4, (c) => inflateM(c, g.R, amt));
+      showCursor(c0, g.R, n0, ring);
+    } else if (t === 'pinch') {
+      const alpha = (stroke.inv ? -1 : 1) * lerp(0.04, 0.3, F('pinch'));
+      if (!stroke.last) Sfx.pull();
+      alongPath(c0, R * 0.4, (c) => pinchM(c, n0, g.R, alpha));
+      showCursor(c0, g.R, n0, ring);
+    } else if (t === 'nudge') {
+      const l = stroke.last;
+      if (l) {
+        const k = (stroke.inv ? -1 : 1) * lerp(0.5, 1.2, F('nudge'));
+        const dx = c0[0] - l[0], dy = c0[1] - l[1], dz = c0[2] - l[2], len = Math.hypot(dx, dy, dz);
+        if (len > 0.05) {
+          const n = Math.max(1, Math.ceil(len / (g.R * 0.3)));
+          for (let i = 0; i < n; i++) grabM([l[0] + dx * i / n, l[1] + dy * i / n, l[2] + dz * i / n], [dx / n, dy / n, dz / n], g.R, k);
+        }
+      } else Sfx.pull();
+      stroke.last = c0;
+      showCursor(c0, g.R, n0, ring);
+    } else {                                           // ajouter, brosse (couche fine), enlever, sillon
+      const adds = t === 'add' || t === 'layer';
+      let c = [h.x + h.nx * g.R * g.off, h.y + h.ny * g.R * g.off, h.z + h.nz * g.R * g.off];
       if (stroke.last) {
         // pinceau « stabilisé » : lisse le tremblement, avec la même durée de lissage quelle que soit la fréquence du périphérique
         const a = 1 - Math.exp(-clamp(dt || 16, 4, 40) / 18), l = stroke.last;
         c = [l[0] + (c[0] - l[0]) * a, l[1] + (c[1] - l[1]) * a, l[2] + (c[2] - l[2]) * a];
-      } else if (stroke.tool === 'add') Sfx.add(); else Sfx.remove();
-      capsuleM(stroke.last || c, c, R, stroke.tool, h);
+      } else if (adds) Sfx.add(); else Sfx.remove();
+      capsuleM(stroke.last || c, c, g.R, adds ? 'add' : 'remove', h, t === 'layer' ? layerHeightK() : undefined);
       stroke.last = c;
-      showCursor(c, R);
+      showCursor(c, g.R, n0, ring);
     }
   }
 
@@ -902,7 +1073,7 @@
       const dx = p.x - l[0], dy = p.y - l[1], dz = p.z - l[2];
       const len = Math.hypot(dx, dy, dz);
       if (len < 0.2) return;
-      const n = Math.ceil(len / (stroke.R * 0.3));
+      const n = Math.ceil(len / (stroke.R * 0.3));       // petits pas : la déformation reste douce et sans repli
       let cur = l;
       for (let i = 1; i <= n; i++) {
         const nx = l[0] + dx * i / n, ny = l[1] + dy * i / n, nz = l[2] + dz * i / n;
@@ -913,9 +1084,9 @@
       showCursor(cur, stroke.R);
       return;
     }
-    const h = pick(e, clay.before);
+    const h = pick(e, ON_CURRENT.has(stroke.tool) ? clay.f : clay.before);
     // un trait reste sur la surface où il a commencé : sur la sculpture il ne « déborde » pas sur le plateau (et inversement)
-    const strays = h && (stroke.tool === 'add' || stroke.tool === 'stamp') && h.floor !== stroke.onFloor;
+    const strays = h && FLOOR_OK.has(stroke.tool) && h.floor !== stroke.onFloor;
     if (strays || !allowed(h, stroke.tool) || !acceptHit(h, e)) { stroke.last = null; hideCursor(); return; }
     if (stroke.tool === 'flatten') { flattenAt(h); return; }
     if (stroke.tool === 'stamp') {                // mode « série »
@@ -948,7 +1119,7 @@
       hideSizeTip();
     }
     if (s.tool === 'stamp') { hideStampGhost(); clay.relaxBox(0.5); clay.relaxBox(0.35); }
-    else if (s.tool !== 'smooth') clay.relaxBox(0.35);
+    else if (!NO_RELAX.has(s.tool)) clay.relaxBox(0.35);   // pas de lissage final pour les déformations : les petits détails restent
     pushUndo(clay.endEdit());
     hideCursor();
     invalidate();
@@ -1002,6 +1173,8 @@
     if (e.pointerType === 'mouse' && e.button === 1) { mode = 'pan'; return; }
     if ((e.pointerType === 'mouse' && e.button === 2) || (pen && (e.buttons & 2))) { mode = 'orbit'; return; }   // clic droit / bouton du stylet : tourner
     const eraser = pen && ((e.buttons & 32) || e.button === 5);                                                      // gomme du stylet : enlever
+    if (e.pointerType !== 'touch' && e.altKey) { mode = 'pan'; return; }                                             // Alt + glisser : déplacer la vue
+    if (spaceDown) { mode = 'orbit'; return; }                                                                       // Espace + glisser : tourner la vue
     if (placement) {
       if (placementMode === 'view') { mode = 'orbit'; return; }
       const h = pickPlace(e);
@@ -1009,9 +1182,9 @@
       return;
     }
     if (tool !== 'orbit' || eraser) {
-      const t = eraser ? 'remove' : tool;
+      const rt = eraser ? { tool: 'remove', inv: false } : resolveTool(tool, readMods(e));   // Maj : lisser · Ctrl : l'inverse
       const h = pick(e, clay.f);
-      if (allowed(h, t)) { beginStroke(h, eraser ? 'remove' : null, e); mode = 'stroke'; invalidate(); return; }
+      if (allowed(h, rt.tool)) { setCursorColor(rt.tool); beginStroke(h, rt, e); mode = 'stroke'; invalidate(); return; }
     } else {
       // double-touche : on s'approche de l'endroit touché
       if (now - lastTap.t < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 28) {
@@ -1028,7 +1201,7 @@
     if (e.pointerType === 'pen') penSeen = performance.now();
     const p = ptrs.get(e.pointerId);
     if (!p) {
-      if (e.pointerType === 'mouse' || e.pointerType === 'pen') { hoverEvt = { clientX: e.clientX, clientY: e.clientY, pointerType: e.pointerType }; invalidate(); }
+      if (e.pointerType === 'mouse' || e.pointerType === 'pen') { hoverEvt = { clientX: e.clientX, clientY: e.clientY, pointerType: e.pointerType, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey || e.metaKey, altKey: e.altKey }; invalidate(); }
       return;
     }
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
@@ -1059,7 +1232,7 @@
   }
   canvas.addEventListener('pointerup', up);
   canvas.addEventListener('pointercancel', up);
-  canvas.addEventListener('pointerleave', (e) => { if (!ptrs.size && (e.pointerType === 'mouse' || e.pointerType === 'pen')) { hideCursor(); hideStampGhost(); } });
+  canvas.addEventListener('pointerleave', (e) => { if (!ptrs.size && (e.pointerType === 'mouse' || e.pointerType === 'pen')) { lastHover = null; hideCursor(); hideStampGhost(); } });
 
   /** Zoom : la molette et le pincement rapprochent aussi de l'endroit visé */
   function zoomBy(factor, e) {
@@ -1080,6 +1253,7 @@
   canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomBy(wheelFactor(e), e); }, { passive: false });
 
   function hover(e) {
+    lastHover = e;
     if (placement) {
       // le survol ne déplace JAMAIS la forme (sinon un clic ne la « poserait » pas : elle suivrait la souris) :
       // elle se place en cliquant ou en la faisant glisser ; au survol, un petit repère montre où le clic la posera
@@ -1087,14 +1261,16 @@
       if (h) showCursor([h.x, h.y, h.z], 1.6); else hideCursor();
       return;
     }
-    if (tool === 'orbit') return;
+    if (tool === 'orbit' || spaceDown || e.altKey) { hideCursor(); hideStampGhost(); return; }
     curPressure = 1; curForceMul = 1;               // survol : taille « normale » (la pression ne compte que pendant le trait)
+    const t = resolveTool(tool, { shift: !!e.shiftKey, ctrl: !!e.ctrlKey, alt: false }).tool;   // Maj / Ctrl changent l'outil, donc le curseur
+    setCursorColor(t);
     const h = pick(e, clay.f);
-    if (!allowed(h)) { hideCursor(); hideStampGhost(); return; }
-    if (tool === 'stamp') { showStampGhost(h, stampSizeDefault()); return; }
-    const R = tool === 'smooth' || tool === 'flatten' ? brushR() * 1.3 : tool === 'stretch' ? brushR() * 1.4 : brushR();
-    const off = tool === 'add' ? addOff() : tool === 'remove' ? removeOff() : 0;
-    showCursor([h.x + h.nx * R * off, h.y + h.ny * R * off, h.z + h.nz * R * off], R);
+    if (!allowed(h, t)) { hideCursor(); hideStampGhost(); return; }
+    if (t === 'stamp') { showStampGhost(h, stampSizeDefault()); return; }
+    hideStampGhost();
+    const g = brushGeom(t);
+    showCursor([h.x + h.nx * g.R * g.off, h.y + h.ny * g.R * g.off, h.z + h.nz * g.R * g.off], g.R, [h.nx, h.ny, h.nz], { p: [h.x, h.y, h.z], r: g.fr });
   }
 
   const panR = new THREE.Vector3(), panU = new THREE.Vector3(), panF = new THREE.Vector3();
@@ -1249,6 +1425,7 @@
     body.classList.toggle('placing', on);
     $('#place').hidden = !on;
     $('#stamp-bar').hidden = on || tool !== 'stamp';
+    brushBar.hidden = on || !brushBarOpen;
     if (on) { hideStampGhost(); hideCursor(); }
     updateViewOffset(); invalidate();
   }
@@ -1631,17 +1808,17 @@
     if (clay.resolution === target) return;
     cancelPlacement();
     clay.setWorld(WL, target);
-    afterGridChange(announce ? 'Résolution : ' + (n <= 56 ? 'éco' : n >= 112 ? 'fine' : 'normale') : '');
+    afterGridChange(announce ? 'Résolution : ' + (n <= 40 ? 'minimale' : n <= 56 ? 'éco' : n >= 112 ? 'fine' : 'normale') : '');
   }
   /** Change la taille du plateau : la sculpture reste au centre, posée sur le sol */
   function applyWorld(lw, announce) {
-    if (lw === WL) return;
+    if (Math.abs(lw - WL) < 0.01) return;
     cancelPlacement();
     clay.setWorld(lw, gridSizeFor(lw, opts.res));
     syncWorld();
     buildWorld();
     goTo(Object.assign(defaultView(), { az: nearestAngle(view.az, 0) }));
-    afterGridChange(announce ? 'Plateau de ' + (lw / 10) + ' cm' + (lw > 100 ? ' : plus de place pour construire !' : '') : '');
+    afterGridChange(announce ? 'Plateau de ' + (Math.round(lw) / 10) + ' cm' + (lw > 100 ? ' : plus de place pour construire !' : '') : '');
     resize();
   }
   function applyLayout() {
@@ -1660,24 +1837,62 @@
     if (isPortrait()) opts.sideOpenP = !opts.sideOpenP; else opts.sideOpen = !opts.sideOpen;
     saveOpts(); applyLayout();
   });
+  /* préréglages de performances : un choix règle d'un coup résolution, affichage, netteté et maillage d'export */
+  const PERF = {
+    min: { label: 'Très faible', res: 40, display: 'eco', sharp: 0.6, exportQ: 'std' },
+    low: { label: 'Faible', res: 56, display: 'eco', sharp: 1, exportQ: 'std' },
+    mid: { label: 'Normal', res: 80, display: 'norm', sharp: 1, exportQ: 'dense' },
+    high: { label: 'Élevé', res: 112, display: 'real', sharp: 1, exportQ: 'dense' }
+  };
+  function applyPerf(id) {
+    const pf = PERF[id];
+    if (!pf) return;
+    opts.perf = id; opts.res = pf.res; opts.display = pf.display; opts.sharp = pf.sharp; opts.exportQ = pf.exportQ;
+    saveOpts();
+    applyDisplay();
+    applyResolution(opts.res, false);
+    syncOptionsUI();
+    toast('Performances : ' + pf.label.toLowerCase() + ' (réglages appliqués)');
+  }
+  const customPerf = () => { opts.perf = 'custom'; };
   function syncOptionsUI() {
-    $$('#opt-world .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.v === WL));
+    $$('#opt-perf .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.perf));
+    $$('#opt-world .seg-btn').forEach((x) => x.classList.toggle('active', Math.abs(+x.dataset.v - WL) < 0.01));
+    const cm = $('#opt-world-cm');
+    if (document.activeElement !== cm) cm.value = String(Math.round(WL) / 10);
+    const g = ClayEngine.grid();
+    $('#world-info').textContent = 'Plateau de ' + (Math.round(WL) / 10) + ' cm : petits cubes de ' + g.H.toFixed(2) + ' mm (grille ' + g.N + '³).' +
+      (WL > 200 ? ' Plus le plateau est grand, moins la sculpture est fine : demande un appareil puissant.' : ' Un plateau plus grand permet de construire des scènes ; ta sculpture est conservée.');
     $$('#opt-ui .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.v === opts.ui));
     $$('#opt-side .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.side));
     $$('#opt-res .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.v === opts.res));
     $$('#opt-display .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.display));
+    $$('#opt-sharp .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.v === opts.sharp));
     $$('#opt-pen .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.penMode));
     $$('#opt-export .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.exportQ));
     seriesBtn.classList.toggle('active', !!opts.stampSeries);
   }
   $('#btn-options').addEventListener('click', () => { syncOptionsUI(); openModal('#modal-options'); });
+  $$('#opt-perf .seg-btn').forEach((b) => b.addEventListener('click', () => applyPerf(b.dataset.v)));
   $$('#opt-world .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.world = +b.dataset.v; saveOpts(); applyWorld(opts.world, true); syncOptionsUI(); }));
+  /** Taille du plateau choisie à la main (6 à 40 cm) */
+  function applyCustomWorld() {
+    const v = parseFloat(String($('#opt-world-cm').value).replace(',', '.'));
+    if (!(v >= 6 && v <= 40)) { toast('Choisis une taille entre 6 et 40 cm'); return; }
+    opts.world = Math.round(v * 10); saveOpts();
+    applyWorld(opts.world, true);
+    $('#opt-world-cm').blur();
+    syncOptionsUI();
+  }
+  $('#opt-world-ok').addEventListener('click', applyCustomWorld);
+  $('#opt-world-cm').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applyCustomWorld(); } });
   $$('#opt-ui .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.ui = +b.dataset.v; saveOpts(); applyLayout(); }));
   $$('#opt-side .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.side = b.dataset.v; saveOpts(); applyLayout(); }));
-  $$('#opt-res .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.res = +b.dataset.v; saveOpts(); syncOptionsUI(); applyResolution(opts.res, true); }));
-  $$('#opt-display .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.display = b.dataset.v; saveOpts(); syncOptionsUI(); applyDisplay(); }));
+  $$('#opt-res .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.res = +b.dataset.v; customPerf(); saveOpts(); syncOptionsUI(); applyResolution(opts.res, true); }));
+  $$('#opt-display .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.display = b.dataset.v; customPerf(); saveOpts(); syncOptionsUI(); applyDisplay(); }));
+  $$('#opt-sharp .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.sharp = +b.dataset.v; customPerf(); saveOpts(); syncOptionsUI(); applyDisplay(); }));
   $$('#opt-pen .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.penMode = b.dataset.v; saveOpts(); syncOptionsUI(); }));
-  $$('#opt-export .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.exportQ = b.dataset.v; saveOpts(); syncOptionsUI(); }));
+  $$('#opt-export .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.exportQ = b.dataset.v; customPerf(); saveOpts(); syncOptionsUI(); }));
 
   let resizeTimer = 0;
   const onResize = () => { computeFs(); clearTimeout(resizeTimer); resizeTimer = setTimeout(applyLayout, 60); resize(); };
@@ -1713,7 +1928,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=30');
+        exportWorker = new Worker('js/exportWorker.js?v=34');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }
@@ -1786,20 +2001,19 @@
     const s = localStorage.getItem('pate3d.v3') || localStorage.getItem('pate3d.v2');
     if (s) { clay.deserialize(s); loaded = true; }            // une surface vide est une sauvegarde valide
   } catch (e) { loaded = false; console.warn('Sauvegarde illisible : nouvelle sculpture', e); }
-  if (!loaded) { clay.setWorld(opts.world, gridSizeFor(opts.world, opts.res)); clay.reset(); }
+  // les OPTIONS sont la référence (taille du plateau, résolution…) : si la sauvegarde date d'avant (ou d'un autre réglage), la sculpture est
+  // rééchantillonnée pour les respecter ; les options ne sont jamais écrasées par ce qui est chargé
+  const wantN = gridSizeFor(opts.world, opts.res);
+  if (!loaded) { clay.setWorld(opts.world, wantN); clay.reset(); }
+  else if (Math.abs(clay.world - opts.world) > 0.01 || clay.resolution !== wantN) clay.setWorld(opts.world, wantN);
   syncWorld();
-  opts.world = WL;
-  {                                              // les options suivent la grille réellement chargée (ancienne sauvegarde, autre appareil…)
-    const eq = (clay.resolution - 1) * 100 / WL + 1;
-    opts.res = [56, 80, 112].reduce((a, b) => (Math.abs(b - eq) < Math.abs(a - eq) ? b : a));
-  }
   buildWorld();
   Object.assign(view, defaultView());
   let ci = 0;
   try { ci = parseInt(localStorage.getItem('pate3d.color') || '0', 10) || 0; } catch (e) { /* ignore */ }
   pickColor(clamp(ci, 0, COLORS.length - 1));
   refreshUndo();
-  setSym('x', false);
+  setSym(opts.sym, false);
   applyDisplay();
   setTool('add');
   applyLayout();
@@ -1820,7 +2034,7 @@
     clay, view, goal: view, pick, camera, renderer, opts, cursors, stampGhost, drawGizmo, gHits: () => gHits,
     dbg: () => ({ mode, ptrs: ptrs.size, queued: strokeQ.length, tool, placing: !!placement, stroke: !!stroke }),
     step: () => { if (raf) cancelAnimationFrame(raf); raf = 0; frame(performance.now()); },
-    startPlacement, getPlacement: () => placement, getStroke: () => stroke, applyWorld, gridSizeFor, zoomPos, distFromPos,
+    startPlacement, getPlacement: () => placement, getStroke: () => stroke, applyWorld, gridSizeFor, zoomPos, distFromPos, applyPerf, setTool, keyMods,
     setPixelRatio: (v) => setPixelRatio(v, 0), getPixelRatio: () => pr, freeC
   };
 })();
