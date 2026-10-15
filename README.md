@@ -23,7 +23,7 @@ Copier le dossier tel quel sur un serveur web : `index.html`, `manifest.webmanif
   - **Outils** : Ajouter, Enlever, Élastique, Tirer, Lisser, Aplatir, Tampon et **Pinceaux** (menu en bas de l'écran, voir plus bas).
   - **Formes** et **Importer** (« objets » qu'on place au lieu de sculpter), en petits boutons tout en bas.
 - **Réglages, à droite** : taille et force propres à chaque outil, 3 tailles rapides, **symétrie** (l'icône montre la symétrie choisie : un point,
-  deux points de part et d'autre d'un axe, quatre points, étoile à six points), 8 couleurs, « Toute la forme » (plus haut / bas / large / fin, tout lisser).
+  deux points de part et d'autre d'un axe, quatre points, étoile à six points), palette de 8 couleurs + **couleurs de ton choix** (bouton +, jusqu'à 40, mémorisées), « Toute la forme » (plus haut / bas / large / fin, tout lisser).
 - **Boutons colorés** : chaque famille de boutons a sa couleur (barre du haut, navigation, outils) pour s'y repérer d'un coup d'œil.
 - En portrait, la navigation devient une carte en haut à gauche et les outils une grille en bas.
 
@@ -55,7 +55,7 @@ molette = zoom, bouton du milieu = déplacer.
 | Tampon (7) | 11 motifs (boule, cube, cône, cœur, étoile, fleur, patte, lune, goutte, diamant, anneau) orientés selon la surface. **Rester appuyé et glisser règle la taille** (aperçu translucide + taille en cm) ; le bouton « Série » colle plusieurs tampons le long du geste |
 | Formes | 13 formes simples + toutes les formes de départ (voir plus bas) : **un clic sur la forme la pose** (visible en transparence, même cachée dans l'argile). **Le survol ne la déplace jamais** : on touche l'endroit où la poser (ou on la glisse ; au-delà du bord du plateau elle va au bord le plus proche), on change taille / rotation 3 axes / hauteur, « Coller » ou « Creuser », puis **Poser** (ou Entrée). Avec la symétrie, la copie « miroir » est montrée en transparence ; elle est active par défaut pour un objet posé sur la sculpture, inactive sur le plateau, et le bouton « Miroir » reprend la main. Pendant le placement, les outils sont masqués pour laisser la place à la scène |
 | Importer | fichier STL ou OBJ (bouton ou glisser-déposer), même placement que les formes |
-| Pinceaux (8) | menu en bas de l'écran : **Brosse** (fine couche régulière), **Gonfler** (la surface avance le long de sa normale), **Pincer** (la matière se rassemble et monte : arête, pli), **Pousser** (déplace la matière dans le sens du geste), **Sillon** (trait fin creusé), **Combler** (remplit creux et trous sans toucher aux bosses). Ils ont chacun leur taille et leur force, la symétrie, le stylet et Ctrl (inverse) |
+| Pinceaux (8) | menu en bas de l'écran : **Peindre** (colore la surface sans changer la forme ; Ctrl : retour à la terre cuite), **Brosse** (fine couche régulière), **Gonfler** (la surface avance le long de sa normale), **Pincer** (la matière se rassemble et monte : arête, pli), **Pousser** (déplace la matière dans le sens du geste), **Sillon** (trait fin creusé), **Combler** (remplit creux et trous sans toucher aux bosses). Ils ont chacun leur taille et leur force, la symétrie, le stylet et Ctrl (inverse) |
 | Navigation | un doigt sur le fond = orbite, deux doigts = zoom + déplacement, double-touche = on s'approche |
 
 **Pas de traînées dans la perspective.** Un trait ne peut pas « sauter » en profondeur (par exemple du bord de la sculpture au plateau
@@ -153,3 +153,14 @@ démarre avec la boule. Les options sont dans `pate3d.opts`, les réglages d'out
 - `js/io.js` — parseurs STL/OBJ, formes de base et motifs, écriture STL/OBJ
 - `js/sound.js` — sons synthétisés
 - `js/app.js` — scène Three.js, textures procédurales, gestes, navigation, placement, historique, options, export
+
+## Couleurs
+Chaque voxel garde sa couleur (numéro de palette, 1 octet par voxel) : le maillage affiché porte une couleur par sommet (celle du voxel de matière
+au bout de l'arête). Ajouter, Brosse, Tampon, Tirer et les formes posées utilisent la couleur choisie ; **Peindre** colore la couche de surface
+(3 voxels) sans toucher à la forme. Élastique / Pincer / Pousser déplacent les couleurs avec la matière, Lisser / Gonfler donnent à la matière
+nouvelle la couleur de sa voisine, annuler / rétablir restaurent aussi les couleurs. Sauvegarde : `N:L|champ|couleurs|palette` (les anciennes
+sauvegardes sans couleurs prennent la couleur qui était choisie). L'export STL/OBJ ne contient pas les couleurs.
+
+## Valeurs par défaut
+Plateau de **15 cm** et résolution **fine (112 voxels / 10 cm, grille plafonnée à 160³)**, sauf appareil modeste (réglages bas). Une migration
+unique (`opts.v = 2`) applique ces valeurs aux réglages déjà mémorisés ; ensuite les options de l'utilisateur font foi.

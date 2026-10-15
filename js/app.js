@@ -23,26 +23,30 @@
 
   /* ---- options générales (mémorisées sur l'ordinateur : retrouvées à chaque ouverture) ---- */
   const lowEnd = (navigator.deviceMemory && navigator.deviceMemory <= 2) || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
+  const OPT_V = 2;                                  // version des réglages : la 2 passe au plateau de 15 cm et à la résolution fine
   const opts = {
-    res: lowEnd ? 56 : 80, world: 100, display: lowEnd ? 'eco' : 'norm', penMode: 'force', exportQ: 'dense',
+    res: lowEnd ? 56 : 112, world: 150, display: lowEnd ? 'eco' : 'norm', penMode: 'force', exportQ: 'dense',
     ui: 1, side: 'left', sideOpen: true, sideOpenP: false, navOpen: true, stampSeries: false,
-    sharp: 1, perf: lowEnd ? 'low' : 'mid', sym: 'x', stamp: 'star'
+    sharp: 1, perf: lowEnd ? 'low' : 'custom', sym: 'x', stamp: 'star', v: OPT_V
   };
   try {
     const saved = JSON.parse(localStorage.getItem('pate3d.opts') || '{}');
     if ('eco' in saved && !('display' in saved)) saved.display = saved.eco ? 'eco' : 'norm';
     if ('pen' in saved && !('penMode' in saved)) saved.penMode = saved.pen ? 'force' : 'off';
+    if ((+saved.v || 0) < OPT_V) { saved.world = 150; if (!lowEnd) { saved.res = 112; saved.perf = 'custom'; } }   // nouveaux réglages par défaut, une seule fois
     Object.assign(opts, saved);
   } catch (e) { /* ignore */ }
+  opts.v = OPT_V;
   delete opts.pen;
   if (['off', 'force', 'size', 'both'].indexOf(opts.penMode) < 0) opts.penMode = 'force';
-  if (![40, 56, 80, 112].includes(+opts.res)) opts.res = 80;
+  if (![40, 56, 80, 112].includes(+opts.res)) opts.res = lowEnd ? 56 : 112;
   opts.res = +opts.res;
-  opts.world = Number.isFinite(+opts.world) && +opts.world >= 60 && +opts.world <= 400 ? +opts.world : 100;
+  opts.world = Number.isFinite(+opts.world) && +opts.world >= 60 && +opts.world <= 400 ? +opts.world : 150;
   if (![0.6, 1, 1.4].includes(+opts.sharp)) opts.sharp = 1;
   opts.sharp = +opts.sharp;
   if (['off', 'x', 'xz', 'rot6'].indexOf(opts.sym) < 0) opts.sym = 'x';
   const saveOpts = () => { try { localStorage.setItem('pate3d.opts', JSON.stringify(opts)); } catch (e) { /* ignore */ } };
+  saveOpts();
 
   /* ------------------------------------------------------------------ Rendu */
   const canvas = $('#gl');
@@ -372,7 +376,7 @@
 
   /* taille (rayon, mm) et force (0-1) propres à chaque outil */
   const toolSet = {};
-  ['add', 'remove', 'pull', 'stretch', 'flatten', 'smooth', 'stamp', 'layer', 'inflate', 'pinch', 'nudge', 'groove', 'fill'].forEach((t) => {
+  ['add', 'remove', 'pull', 'stretch', 'flatten', 'smooth', 'stamp', 'layer', 'inflate', 'pinch', 'nudge', 'groove', 'fill', 'paint'].forEach((t) => {
     toolSet[t] = { size: ['stretch', 'stamp', 'layer', 'nudge'].includes(t) ? 8 : 7, force: 0.5 };
   });
   try {
@@ -400,7 +404,7 @@
 
   const CURSOR_COLORS = {
     add: 0x22c55e, remove: 0xef4444, pull: 0x3b82f6, smooth: 0xeab308, stamp: 0xf97316, stretch: 0x06b6d4, flatten: 0x84cc16,
-    layer: 0xd97706, inflate: 0xec4899, pinch: 0x8b5cf6, nudge: 0x0ea5e9, groove: 0x64748b, fill: 0x14b8a6, orbit: 0x000000
+    layer: 0xd97706, inflate: 0xec4899, pinch: 0x8b5cf6, nudge: 0x0ea5e9, groove: 0x64748b, fill: 0x14b8a6, paint: 0xe11d48, orbit: 0x000000
   };
   const TOOL_INFO = {
     add: ['Ajouter', 'pose de la matière, la force règle l’épaisseur. Ctrl : enlever.'],
@@ -415,10 +419,12 @@
     pinch: ['Pincer', 'pince la matière pour faire une arête ou un pli. Ctrl : écarter.'],
     nudge: ['Pousser', 'pousse la matière dans le sens de ton geste. Ctrl : à l’envers.'],
     groove: ['Sillon', 'trace un sillon fin pour dessiner des lignes et des plis. Ctrl : brosse.'],
-    fill: ['Combler', 'remplit les trous et les creux sans toucher aux bosses.']
+    fill: ['Combler', 'remplit les trous et les creux sans toucher aux bosses.'],
+    paint: ['Peindre', 'colore la surface avec la couleur choisie, sans changer la forme. Ctrl : remet la terre cuite.']
   };
   /* pinceaux supplémentaires (menu en bas de l'écran) */
   const BRUSHES = [
+    { id: 'paint', icon: 'i-paint', c: '#e11d48', cs: '#fde4ea', cd: '#9f1239' },
     { id: 'layer', icon: 'i-layer', c: '#d97706', cs: '#fdeccf', cd: '#b45309' },
     { id: 'inflate', icon: 'i-inflate', c: '#ec4899', cs: '#fde6f2', cd: '#be185d' },
     { id: 'pinch', icon: 'i-pinch', c: '#8b5cf6', cs: '#ede8fe', cd: '#6d28d9' },
@@ -541,23 +547,53 @@
   const cycleSym = () => setSym(SYM_ORDER[(SYM_ORDER.indexOf(sym) + 1) % SYM_ORDER.length], true);
   $('#btn-mirror').addEventListener('click', cycleSym);
 
-  /* couleurs (purement décoratives) */
-  const COLORS = [0xf2a679, 0x7cb7ff, 0x6ee7a0, 0xf78fc0, 0xfde047, 0xfaf9f7, 0xb8a2fb, 0x4ee3cf];
+  /* couleurs : les outils qui posent de la matière (Ajouter, Brosse, Tampon, Tirer, formes) et « Peindre » utilisent la couleur choisie ;
+     chaque morceau de la sculpture garde sa couleur. Le « + » ajoute une couleur de ton choix à la palette. */
   const COLOR_NAMES = ['terre cuite', 'bleu', 'vert', 'rose', 'jaune', 'blanc', 'violet', 'turquoise'];
+  const PAL_MAX = 40;
   const colorBox = $('#colors');
-  COLORS.forEach((c, i) => {
-    const b = document.createElement('button');
-    b.className = 'swatch';
-    b.style.setProperty('--c', '#' + c.toString(16).padStart(6, '0'));
-    b.setAttribute('aria-label', 'Couleur ' + COLOR_NAMES[i]);
-    b.title = COLOR_NAMES[i];
-    b.addEventListener('click', () => pickColor(i));
-    colorBox.appendChild(b);
-  });
+  const hex6 = (c) => '#' + c.toString(16).padStart(6, '0');
+  try {
+    const pl = JSON.parse(localStorage.getItem('pate3d.palette') || 'null');
+    if (Array.isArray(pl) && pl.length >= 8 && pl.every((c) => Number.isInteger(c) && c >= 0 && c <= 0xffffff)) clay.setPalette(pl.slice(0, PAL_MAX));
+  } catch (e) { /* ignore */ }
+  const savePalette = () => { try { localStorage.setItem('pate3d.palette', JSON.stringify(clay.pal)); } catch (e) { /* ignore */ } };
+  function renderPalette() {
+    colorBox.textContent = '';
+    clay.pal.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.className = 'swatch' + (i === clay.paint ? ' active' : '');
+      b.style.setProperty('--c', hex6(c));
+      b.setAttribute('aria-label', 'Couleur ' + (COLOR_NAMES[i] || (i + 1)));
+      b.title = COLOR_NAMES[i] || 'Couleur ' + (i + 1);
+      b.addEventListener('click', () => pickColor(i));
+      colorBox.appendChild(b);
+    });
+    const add = document.createElement('label');
+    add.className = 'swatch add'; add.title = 'Ajouter une couleur de ton choix';
+    add.innerHTML = '<svg class="ic"><use href="#i-plus"/></svg><input type="color" aria-label="Ajouter une couleur" value="' + hex6(clay.pal[clay.paint] || 0xf2a679) + '">';
+    add.querySelector('input').addEventListener('change', (e) => addColor(parseInt(String(e.target.value).slice(1), 16)));
+    colorBox.appendChild(add);
+  }
+  function addColor(c) {
+    if (!(c >= 0 && c <= 0xffffff)) return;
+    let i = clay.pal.indexOf(c);
+    if (i < 0) {
+      if (clay.pal.length >= PAL_MAX) { toast('La palette est pleine (' + PAL_MAX + ' couleurs)'); return; }
+      clay.setPalette(clay.pal.concat([c]));
+      i = clay.pal.length - 1;
+      savePalette();
+    }
+    renderPalette();
+    pickColor(i);
+    scheduleSave();                       // la palette est enregistrée avec la sculpture
+  }
   function pickColor(i) {
-    clay.setColor(COLORS[i]);
-    Array.from(colorBox.children).forEach((x, n) => x.classList.toggle('active', n === i));
+    i = clamp(i, 0, clay.pal.length - 1);
+    clay.paint = i;
+    Array.from(colorBox.querySelectorAll('.swatch:not(.add)')).forEach((x, n) => x.classList.toggle('active', n === i));
     try { localStorage.setItem('pate3d.color', String(i)); } catch (e) { /* ignore */ }
+    CURSOR_COLORS.paint = clay.pal[i]; cursorColorTool = ''; setCursorColor(tool);     // le curseur de « Peindre » a la couleur choisie
     invalidate();
   }
 
@@ -730,6 +766,9 @@
   function inflateM(c, r, amount) {
     for (const M of xfs()) { const q = ap(M, c); clay.inflate(q[0], q[1], q[2], r, amount); }
   }
+  function paintM(c, r, idx) {
+    for (const M of xfs()) { const q = ap(M, c); clay.paintAt(q[0], q[1], q[2], r, idx); }
+  }
   function pinchM(c, n, r, alpha) {
     for (const M of xfs()) { const q = ap(M, c), m = ap(M, n); clay.warpPinch(q[0], q[1], q[2], m[0], m[1], m[2], r, alpha); }
   }
@@ -765,8 +804,8 @@
 
   /* outils qui peuvent aussi travailler sur le plateau / qui visent la surface en cours de déformation / sans lissage final */
   const FLOOR_OK = new Set(['add', 'layer', 'stamp']);
-  const ON_CURRENT = new Set(['smooth', 'fill', 'inflate', 'pinch', 'nudge']);
-  const NO_RELAX = new Set(['smooth', 'fill', 'stretch', 'pinch', 'nudge', 'inflate']);
+  const ON_CURRENT = new Set(['smooth', 'fill', 'inflate', 'pinch', 'nudge', 'paint']);
+  const NO_RELAX = new Set(['smooth', 'fill', 'stretch', 'pinch', 'nudge', 'inflate', 'paint']);
   const allowed = (h, t) => !!h && h.c >= MIN_C && (FLOOR_OK.has(t || tool) || !h.floor);
 
   /* --- tampons --- */
@@ -987,6 +1026,11 @@
     if (t === 'smooth' || t === 'fill') {
       if (!stroke.last) Sfx.smooth();
       alongPath(c0, R * 0.4, (c) => smoothM(c, g.R, t === 'fill'));
+      showCursor(c0, g.R, n0, ring);
+    } else if (t === 'paint') {
+      if (!stroke.last) Sfx.smooth();
+      const idx = stroke.inv ? 0 : clay.paint;
+      alongPath(c0, R * 0.35, (c) => paintM(c, g.R, idx));
       showCursor(c0, g.R, n0, ring);
     } else if (t === 'inflate') {
       const amt = (stroke.inv ? -1 : 1) * R * (0.03 + 0.2 * F('inflate'));
@@ -1928,7 +1972,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=34');
+        exportWorker = new Worker('js/exportWorker.js?v=36');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }
@@ -1997,10 +2041,14 @@
 
   /* ------------------------------------------------------------------ Démarrage */
   let loaded = false;
+  let ci = 0;
+  try { ci = parseInt(localStorage.getItem('pate3d.color') || '0', 10) || 0; } catch (e) { /* ignore */ }
   try {
     const s = localStorage.getItem('pate3d.v3') || localStorage.getItem('pate3d.v2');
     if (s) { clay.deserialize(s); loaded = true; }            // une surface vide est une sauvegarde valide
   } catch (e) { loaded = false; console.warn('Sauvegarde illisible : nouvelle sculpture', e); }
+  clay.paint = clamp(ci, 0, clay.pal.length - 1);
+  if (loaded && !clay.loadedColors) clay.col.fill(clay.paint);   // ancienne sauvegarde sans couleurs : toute la sculpture prend la couleur qui était choisie
   // les OPTIONS sont la référence (taille du plateau, résolution…) : si la sauvegarde date d'avant (ou d'un autre réglage), la sculpture est
   // rééchantillonnée pour les respecter ; les options ne sont jamais écrasées par ce qui est chargé
   const wantN = gridSizeFor(opts.world, opts.res);
@@ -2009,9 +2057,8 @@
   syncWorld();
   buildWorld();
   Object.assign(view, defaultView());
-  let ci = 0;
-  try { ci = parseInt(localStorage.getItem('pate3d.color') || '0', 10) || 0; } catch (e) { /* ignore */ }
-  pickColor(clamp(ci, 0, COLORS.length - 1));
+  renderPalette();
+  pickColor(clay.paint);
   refreshUndo();
   setSym(opts.sym, false);
   applyDisplay();

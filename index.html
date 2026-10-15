@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=34">
+  <link rel="stylesheet" href="css/style.css?v=36">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
     /* secours si le premier CDN est injoignable */
@@ -54,6 +54,8 @@
       <symbol id="i-pinch" viewBox="0 0 24 24"><path d="M3 12h6.2M20.9 12h-6.2"/><path d="M6.5 8.5 9.5 12l-3 3.5M17.5 8.5 14.5 12l3 3.5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></symbol>
       <symbol id="i-nudge" viewBox="0 0 24 24"><path d="M3.5 6v12"/><path d="M7.5 12h13M16 7.5l4.5 4.5-4.5 4.5"/></symbol>
       <symbol id="i-groove" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2.5"/><path d="M6.5 12c1.8 2.4 3.5 2.4 5.5 0s3.7-2.4 5.5 0"/></symbol>
+      <symbol id="i-paint" viewBox="0 0 24 24"><path d="M4 4h12a1.5 1.5 0 0 1 1.5 1.5V9H4z"/><path d="M17.5 6.5H20v5.5H11.5V15"/><rect x="9.5" y="15" width="4" height="6.5" rx="1.2"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
       <symbol id="i-fill" viewBox="0 0 24 24"><path d="M5 10h14l-1.5 9.5h-11z"/><path d="M8.5 14.5h7"/><path d="M12 2.8c1.6 2 2.5 3 2.5 4.3a2.5 2.5 0 0 1-5 0c0-1.3.9-2.3 2.5-4.3z"/></symbol>
       <symbol id="i-brushes" viewBox="0 0 24 24"><circle cx="7" cy="7" r="3.2"/><circle cx="17" cy="7" r="3.2"/><circle cx="7" cy="17" r="3.2"/><circle cx="17" cy="17" r="3.2"/></symbol>
       <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h4.5v-6h4v6h4.5V10"/></symbol>
@@ -139,7 +141,7 @@
         <button class="tool"        data-tool="smooth"  style="--c:#eab308;--cs:#fdf5d6;--cd:#a16207" title="Lisser et arrondir (5) · maintiens Maj avec n'importe quel outil"><svg class="ic"><use href="#i-smooth"/></svg><b>Lisser</b></button>
         <button class="tool"        data-tool="flatten" style="--c:#84cc16;--cs:#eef8d9;--cd:#4d7c0f" title="Raboter : aplatir une surface (6)"><svg class="ic"><use href="#i-flatten"/></svg><b>Aplatir</b></button>
         <button class="tool"        data-tool="stamp"   style="--c:#f97316;--cs:#feebdc;--cd:#c2410c" title="Coller des motifs (7)"><svg class="ic"><use href="#i-stamp"/></svg><b>Tampon</b></button>
-        <button id="btn-brushes" class="tool" style="--c:#8b5cf6;--cs:#ede8fe;--cd:#6d28d9" title="Plus de pinceaux : brosse, gonfler, pincer, pousser, sillon, combler (8)"><svg class="ic"><use href="#i-brushes"/></svg><b>Pinceaux</b></button>
+        <button id="btn-brushes" class="tool" style="--c:#8b5cf6;--cs:#ede8fe;--cd:#6d28d9" title="Plus de pinceaux : peindre, brosse, gonfler, pincer, pousser, sillon, combler (8)"><svg class="ic"><use href="#i-brushes"/></svg><b>Pinceaux</b></button>
       </div>
       <div class="objects">
         <div class="obj-row">
@@ -168,7 +170,7 @@
           <span><b>Symétrie</b><small id="sym-label">gauche-droite</small></span>
         </button>
         <section class="sec">
-          <h3>Couleur</h3>
+          <h3 title="Couleur des outils qui posent de la matière et de « Peindre »">Couleur</h3>
           <div id="colors" class="colors"></div>
         </section>
         <section class="sec">
@@ -426,7 +428,7 @@
         <li style="--c:#eab308"><svg class="ic"><use href="#i-smooth"/></svg><span><b>Lisser</b> : passe l'éponge pour arrondir.</span></li>
         <li style="--c:#f97316"><svg class="ic"><use href="#i-stamp"/></svg><span><b>Tampon</b> : touche pour coller un motif ; reste appuyé et glisse pour choisir sa taille.</span></li>
         <li style="--c:#ec4899"><svg class="ic"><use href="#i-shapes"/></svg><span><b>Formes</b> : choisis une forme (ou un personnage, un animal…), touche l'endroit où la poser (elle reste là), change sa taille, puis appuie sur « Poser ». Avec <b>Nouveau › Surface vide</b>, tu commences de zéro et tu poses tout toi-même.</span></li>
-        <li style="--c:#8b5cf6"><svg class="ic"><use href="#i-brushes"/></svg><span><b>Pinceaux</b> : brosse, gonfler, pincer, pousser, sillon, combler (menu en bas de l'écran).</span></li>
+        <li style="--c:#8b5cf6"><svg class="ic"><use href="#i-brushes"/></svg><span><b>Pinceaux</b> : peindre, brosse, gonfler, pincer, pousser, sillon, combler (menu en bas de l'écran). <b>Couleurs</b> : choisis une couleur à droite (le + en ajoute une) ; ce que tu poses et ce que tu peins garde sa couleur.</span></li>
         <li style="--c:#8b5cf6"><svg class="ic"><use href="#i-orbit"/></svg><span><b>Navigation</b> (en haut à gauche) : glisse sur la sphère ou touche X, Y, Z ; boutons de rotation ; zoom avec le curseur ou la molette. Clavier : flèches ou Q Z S D pour tourner, Maj + flèches pour déplacer, + / − pour zoomer, H pour la vue de départ.</span></li>
         <li style="--c:#64748b"><svg class="ic"><use href="#i-settings"/></svg><span><b>Raccourcis</b> : maintiens <b>Maj</b> pour lisser, <b>Ctrl</b> pour faire l'inverse (ajouter ↔ enlever), <b>Alt</b> + glisser pour déplacer la vue, <b>Espace</b> + glisser pour tourner. 1 à 7 : outils, 8 : pinceaux, F : formes, X : symétrie, [ ] : taille.</span></li>
         <li style="--c:#0ea5e9"><svg class="ic"><use href="#i-sym1"/></svg><span><b>Symétrie</b> : ce que tu fais d'un côté se répète de l'autre (ou en étoile).</span></li>
@@ -456,10 +458,10 @@
 
   <noscript><div class="modal"><div class="card small"><h2>Oups</h2><p>Pâte3D a besoin de JavaScript pour fonctionner.</p></div></div></noscript>
 
-  <script src="js/sound.js?v=34"></script>
-  <script src="js/starters.js?v=34"></script>
-  <script src="js/clay.js?v=34"></script>
-  <script src="js/io.js?v=34"></script>
-  <script src="js/app.js?v=34"></script>
+  <script src="js/sound.js?v=36"></script>
+  <script src="js/starters.js?v=36"></script>
+  <script src="js/clay.js?v=36"></script>
+  <script src="js/io.js?v=36"></script>
+  <script src="js/app.js?v=36"></script>
 </body>
 </html>
