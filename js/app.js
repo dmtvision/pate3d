@@ -27,7 +27,7 @@
   const opts = {
     res: lowEnd ? 56 : 112, world: 150, display: lowEnd ? 'eco' : 'norm', penMode: 'force', exportQ: 'dense',
     ui: 1, side: 'left', sideOpen: true, sideOpenP: false, navOpen: true, stampSeries: false,
-    sharp: 1, perf: lowEnd ? 'low' : 'custom', sym: 'x', stamp: 'star', v: OPT_V
+    sharp: 1, perf: lowEnd ? 'low' : 'custom', sym: 'x', stamp: 'star', boolPreview: !lowEnd, v: OPT_V
   };
   try {
     const saved = JSON.parse(localStorage.getItem('pate3d.opts') || '{}');
@@ -37,6 +37,7 @@
     Object.assign(opts, saved);
   } catch (e) { /* ignore */ }
   opts.v = OPT_V;
+  opts.boolPreview = !!opts.boolPreview;
   delete opts.pen;
   if (['off', 'force', 'size', 'both'].indexOf(opts.penMode) < 0) opts.penMode = 'force';
   if (![40, 56, 80, 112].includes(+opts.res)) opts.res = lowEnd ? 56 : 112;
@@ -613,14 +614,18 @@
   }
   function undo() {
     endStroke();
+    clearPreview();
     const e = undoStack.pop();
+    schedulePreview();
     if (!e) return;
     clay.undoEntry(e); redoStack.push(e); Sfx.undo();
     refreshUndo(); scheduleSave(); invalidate();
   }
   function redo() {
     endStroke();
+    clearPreview();
     const e = redoStack.pop();
+    schedulePreview();
     if (!e) return;
     clay.redoEntry(e); undoStack.push(e); Sfx.undo();
     refreshUndo(); scheduleSave(); invalidate();
@@ -693,9 +698,12 @@
   let saveTimer = 0, saveWarned = false;
   function saveNow() {
     clearTimeout(saveTimer); saveTimer = 0;
+    const hadPreview = !!pvEntry;
+    if (hadPreview) clearPreview();                       // on n'enregistre jamais l'aperçu
     try { localStorage.setItem('pate3d.v3', clay.serialize()); } catch (e) {
       if (!saveWarned) { saveWarned = true; toast('Sauvegarde automatique impossible (espace plein ?) : exporte ton travail !'); }
     }
+    if (hadPreview) schedulePreview();
   }
   function scheduleSave() {
     clearTimeout(saveTimer);
@@ -1543,6 +1551,8 @@
     $('#pl-size').value = Math.round(p.size);
     const deg = (r) => { let d = Math.round((r * 180 / Math.PI) % 360); if (d < 0) d += 360; return d; };
     $('#place-angles-label').textContent = `Y: ${deg(p.yaw)}° · X: ${deg(p.pitch)}° · Z: ${deg(p.roll)}°`;
+    ghostMat.opacity = opts.boolPreview ? 0.3 : 0.78;       // avec l'aperçu, on voit le résultat à travers la forme
+    schedulePreview();
     invalidate();
   }
 
@@ -1588,6 +1598,7 @@
 
   function cancelPlacement() {
     if (!placement) return;
+    clearPreview();
     scene.remove(placement.mesh);
     for (const g of placement.ghosts) scene.remove(g);
     placement.geo.dispose();
@@ -1595,9 +1606,28 @@
     setPlacing(false);
   }
 
-  function validatePlacement() {
-    const p = placement;
-    if (!p) return;
+  /* Aperçu en direct du booléen (Coller / Creuser) : la forme est vraiment collée ou creusée dans la sculpture, puis
+     * annulée au coup suivant. Un seul calcul à la fois, espacé de 3× son propre coût : le déplacement reste fluide. */
+  let pvEntry = null, pvTimer = 0, pvLast = 0, pvCost = 20;
+  function clearPreview() {
+    clearTimeout(pvTimer); pvTimer = 0;
+    if (pvEntry) { clay.undoEntry(pvEntry); pvEntry = null; invalidate(); }
+  }
+  function schedulePreview() {
+    if (!opts.boolPreview || !placement || pvTimer) return;
+    pvTimer = setTimeout(runPreview, Math.max(0, pvLast + Math.max(80, pvCost * 3) - performance.now()));
+  }
+  function runPreview() {
+    pvTimer = 0;
+    if (!placement || !opts.boolPreview) return;
+    const t0 = performance.now();
+    if (pvEntry) { clay.undoEntry(pvEntry); pvEntry = null; }
+    pvEntry = placementEdit(placement);
+    pvLast = performance.now(); pvCost = pvLast - t0;
+    invalidate();
+  }
+  /** Colle ou creuse la forme (et ses copies miroir) dans la sculpture ; retourne l'entrée d'historique (ou null) */
+  function placementEdit(p) {
     p.mesh.updateMatrix();
     const e = p.mesh.matrix.elements;
     const b = p.base, n = b.length;
@@ -1619,7 +1649,14 @@
       clay.stampMesh(applyM(world, M), m);
     });
     clay.relaxBox(0.5); clay.relaxBox(0.4);
-    const entry = clay.endEdit();
+    return clay.endEdit();
+  }
+
+  function validatePlacement() {
+    const p = placement;
+    if (!p) return;
+    clearPreview();
+    const entry = placementEdit(p);
     if (!entry) toast(p.carve ? 'Il n’y a rien à creuser à cet endroit !' : 'La forme est en dehors du plateau !');
     pushUndo(entry);
     if (entry) Sfx.place();
@@ -1669,10 +1706,10 @@
   $('#pl-size').addEventListener('input', (e) => { if (placement) { placement.size = +e.target.value; updateGhost(); } });
   $$('.chip[data-scale]').forEach((chip) => chip.addEventListener('click', () => { if (placement) { placement.size = +chip.dataset.scale; updateGhost(); } }));
   $('#pl-add').addEventListener('click', () => {
-    if (placement) { placement.carve = false; $('#pl-add').classList.add('active'); $('#pl-carve').classList.remove('active'); }
+    if (placement) { placement.carve = false; $('#pl-add').classList.add('active'); $('#pl-carve').classList.remove('active'); schedulePreview(); }
   });
   $('#pl-carve').addEventListener('click', () => {
-    if (placement) { placement.carve = true; $('#pl-carve').classList.add('active'); $('#pl-add').classList.remove('active'); }
+    if (placement) { placement.carve = true; $('#pl-carve').classList.add('active'); $('#pl-add').classList.remove('active'); schedulePreview(); }
   });
 
   /* ------------------------------------------------------------------ Fenêtres, formes, import */
@@ -1883,15 +1920,15 @@
   });
   /* préréglages de performances : un choix règle d'un coup résolution, affichage, netteté et maillage d'export */
   const PERF = {
-    min: { label: 'Très faible', res: 40, display: 'eco', sharp: 0.6, exportQ: 'std' },
-    low: { label: 'Faible', res: 56, display: 'eco', sharp: 1, exportQ: 'std' },
-    mid: { label: 'Normal', res: 80, display: 'norm', sharp: 1, exportQ: 'dense' },
-    high: { label: 'Élevé', res: 112, display: 'real', sharp: 1, exportQ: 'dense' }
+    min: { label: 'Très faible', res: 40, display: 'eco', sharp: 0.6, exportQ: 'std', bool: false },
+    low: { label: 'Faible', res: 56, display: 'eco', sharp: 1, exportQ: 'std', bool: false },
+    mid: { label: 'Normal', res: 80, display: 'norm', sharp: 1, exportQ: 'dense', bool: true },
+    high: { label: 'Élevé', res: 112, display: 'real', sharp: 1, exportQ: 'dense', bool: true }
   };
   function applyPerf(id) {
     const pf = PERF[id];
     if (!pf) return;
-    opts.perf = id; opts.res = pf.res; opts.display = pf.display; opts.sharp = pf.sharp; opts.exportQ = pf.exportQ;
+    opts.perf = id; opts.res = pf.res; opts.display = pf.display; opts.sharp = pf.sharp; opts.exportQ = pf.exportQ; opts.boolPreview = pf.bool;
     saveOpts();
     applyDisplay();
     applyResolution(opts.res, false);
@@ -1914,6 +1951,7 @@
     $$('#opt-sharp .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.v === opts.sharp));
     $$('#opt-pen .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.penMode));
     $$('#opt-export .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.exportQ));
+    $$('#opt-bool .seg-btn').forEach((x) => x.classList.toggle('active', (x.dataset.v === '1') === opts.boolPreview));
     seriesBtn.classList.toggle('active', !!opts.stampSeries);
   }
   $('#btn-options').addEventListener('click', () => { syncOptionsUI(); openModal('#modal-options'); });
@@ -1936,6 +1974,11 @@
   $$('#opt-display .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.display = b.dataset.v; customPerf(); saveOpts(); syncOptionsUI(); applyDisplay(); }));
   $$('#opt-sharp .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.sharp = +b.dataset.v; customPerf(); saveOpts(); syncOptionsUI(); applyDisplay(); }));
   $$('#opt-pen .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.penMode = b.dataset.v; saveOpts(); syncOptionsUI(); }));
+  $$('#opt-bool .seg-btn').forEach((b) => b.addEventListener('click', () => {
+    opts.boolPreview = b.dataset.v === '1'; saveOpts(); syncOptionsUI();
+    if (opts.boolPreview) schedulePreview(); else clearPreview();
+    if (placement) updateGhost();
+  }));
   $$('#opt-export .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.exportQ = b.dataset.v; customPerf(); saveOpts(); syncOptionsUI(); }));
 
   let resizeTimer = 0;
@@ -1972,7 +2015,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=36');
+        exportWorker = new Worker('js/exportWorker.js?v=39');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }
@@ -2012,6 +2055,7 @@
     setTimeout(() => { showExport(clay.buildExport(job.target, job.iters)); }, 30);
   }
   function computeExport() {
+    clearPreview();
     exportMesh = null;
     const st = $('#print-status');
     st.className = 'status'; st.textContent = opts.exportQ === 'std' ? 'Vérification…' : 'Calcul du maillage lisse… (quelques secondes)';

@@ -164,3 +164,10 @@ sauvegardes sans couleurs prennent la couleur qui était choisie). L'export STL/
 ## Valeurs par défaut
 Plateau de **15 cm** et résolution **fine (112 voxels / 10 cm, grille plafonnée à 160³)**, sauf appareil modeste (réglages bas). Une migration
 unique (`opts.v = 2`) applique ces valeurs aux réglages déjà mémorisés ; ensuite les options de l'utilisateur font foi.
+
+## Aperçu du booléen (Coller / Creuser)
+Pendant le placement d'une forme, le résultat est calculé pour de vrai dans la sculpture (forme + copies miroir + lissage), puis annulé au coup suivant
+(`placementEdit`, `runPreview`, `clearPreview` dans app.js) : ce que l'on voit est exactement ce que « Poser » produira (vérifié : mêmes voxels).
+Un seul calcul à la fois, espacé de 3× son propre coût (80 ms au minimum) ; ~3 ms pour une forme de 32 000 triangles à 160³. Option « Aperçu du résultat
+en posant une forme » (Options ; désactivé par les préréglages « Très faible » et « Faible » et sur appareil modeste). L'aperçu n'est jamais enregistré
+(sauvegarde, export, annuler/rétablir l'annulent d'abord).

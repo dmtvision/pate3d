@@ -63,6 +63,7 @@
   function raycast(f, ox, oy, oz, dx, dy, dz) {
     const go = [(ox + HALF) / H, (oy + FLOOR_Y) / H, (oz + HALF) / H];
     const gd = [dx / H, dy / H, dz / H];
+    if (!(go[0] + go[1] + go[2] + gd[0] + gd[1] + gd[2] === go[0] + go[1] + go[2] + gd[0] + gd[1] + gd[2])) return null;   // coordonnées invalides (NaN) : jamais de boucle sans fin
     let t0 = 0, t1 = Infinity;
     for (let a = 0; a < 3; a++) {
       const lo = 1, hi = N - 2;
@@ -75,7 +76,7 @@
         if (tb < t1) t1 = tb;
       }
     }
-    if (t0 > t1) return null;
+    if (!(t0 <= t1) || !isFinite(t1)) return null;
     const step = 0.4 * H;
     let prev = sample(f, go[0] + gd[0] * t0, go[1] + gd[1] * t0, go[2] + gd[2] * t0);
     if (prev >= ISO) return null;
