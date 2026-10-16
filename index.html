@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=40">
+  <link rel="stylesheet" href="css/style.css?v=46">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
     /* secours si le premier CDN est injoignable */
@@ -80,8 +80,9 @@
     <div class="top-actions">
       <button id="btn-undo" class="pill c-amber" disabled title="Annuler (Ctrl+Z)" aria-label="Annuler"><svg class="ic"><use href="#i-undo"/></svg><span>Oups</span></button>
       <button id="btn-redo" class="pill round c-amber" disabled title="Refaire (Ctrl+Y)" aria-label="Refaire"><svg class="ic"><use href="#i-redo"/></svg></button>
+      <i class="top-sep" aria-hidden="true"></i>
       <button id="btn-new" class="pill c-orange" title="Nouvelle sculpture" aria-label="Nouvelle sculpture"><svg class="ic"><use href="#i-new"/></svg><span>Nouveau</span></button>
-      <button id="btn-import-top" class="pill blue round" title="Importer un fichier 3D (STL ou OBJ)" aria-label="Importer un fichier 3D"><svg class="ic"><use href="#i-import"/></svg></button>
+      <button id="btn-import-top" class="pill blue" title="Importer un fichier 3D (STL ou OBJ)" aria-label="Importer un fichier 3D"><svg class="ic"><use href="#i-import"/></svg><span>Importer</span></button>
     </div>
     <div class="top-right">
       <button id="btn-help" class="pill round c-violet" title="Comment ça marche ?" aria-label="Aide"><svg class="ic"><use href="#i-help"/></svg></button>
@@ -134,17 +135,19 @@
         </div>
       </section>
       <div class="tool-grid">
+        <h4 class="grp-title">Sculpter</h4>
         <button class="tool active" data-tool="add"     style="--c:#22c55e;--cs:#e4f7ea;--cd:#15803d" title="Ajouter de la matière (1) : les pinceaux apparaissent en bas · Ctrl : enlever"><svg class="ic"><use href="#i-add"/></svg><b>Ajouter</b></button>
         <button class="tool"        data-tool="remove"  style="--c:#ef4444;--cs:#fde9e9;--cd:#b91c1c" title="Gratter, creuser (2) : les pinceaux apparaissent en bas · Ctrl : ajouter"><svg class="ic"><use href="#i-remove"/></svg><b>Enlever</b></button>
         <button class="tool"        data-tool="stretch" style="--c:#06b6d4;--cs:#dff6fb;--cd:#0e7490" title="Élastique : attrape et étire la matière comme de la pâte (3)"><svg class="ic"><use href="#i-stretch"/></svg><b>Élastique</b></button>
         <button class="tool"        data-tool="pull"    style="--c:#3b82f6;--cs:#e6effe;--cd:#1d4ed8" title="Tirer une corne, une queue (4)"><svg class="ic"><use href="#i-pull"/></svg><b>Tirer</b></button>
         <button class="tool"        data-tool="smooth"  style="--c:#eab308;--cs:#fdf5d6;--cd:#a16207" title="Lisser et arrondir (5) · maintiens Maj avec n'importe quel outil"><svg class="ic"><use href="#i-smooth"/></svg><b>Lisser</b></button>
         <button class="tool"        data-tool="flatten" style="--c:#84cc16;--cs:#eef8d9;--cd:#4d7c0f" title="Raboter : aplatir une surface (6)"><svg class="ic"><use href="#i-flatten"/></svg><b>Aplatir</b></button>
-        <div class="tool-sep" aria-hidden="true"></div>
+        <h4 class="grp-title">Décorer</h4>
         <button class="tool"        data-tool="stamp"   style="--c:#f97316;--cs:#feebdc;--cd:#c2410c" title="Coller des motifs (7)"><svg class="ic"><use href="#i-stamp"/></svg><b>Tampon</b></button>
         <button class="tool"        data-tool="paint"   style="--c:#e11d48;--cs:#fde4ea;--cd:#9f1239" title="Peindre : colorer la surface avec la couleur choisie à droite (8) · Ctrl : terre cuite"><svg class="ic"><use href="#i-paint"/></svg><b>Peindre</b></button>
       </div>
       <div class="objects">
+        <h4 class="grp-title">Objets à poser</h4>
         <div class="obj-row">
           <button id="btn-shapes" class="tool special" style="--c:#ec4899;--cs:#fde6f2;--cd:#be185d" title="Placer une forme : boule, personnage, animal… (F)"><svg class="ic"><use href="#i-shapes"/></svg><b>Formes</b></button>
           <button id="btn-import-dock" class="tool special" style="--c:#0284c7;--cs:#e0f2fb;--cd:#075985" title="Importer un fichier 3D (STL / OBJ)"><svg class="ic"><use href="#i-import"/></svg><b>Importer</b></button>
@@ -156,8 +159,11 @@
     <aside id="side" class="dock right">
       <button id="btn-side-toggle" class="dock-head" title="Réduire ou ouvrir les réglages" aria-expanded="true"><span>Réglages</span><svg class="ic" id="side-arrow"><use href="#i-chev"/></svg></button>
       <div class="dock-body">
+        <div id="side-tool" class="side-tool" style="--c:#22c55e;--cs:#e4f7ea;--cd:#15803d" aria-live="polite">
+          <svg class="ic"><use id="side-tool-ic" href="#i-add"/></svg><span><small>Outil</small><b id="side-tool-name">Ajouter</b></span>
+        </div>
         <section class="sec">
-          <h3>Pinceau</h3>
+          <h3>Taille et force</h3>
           <div class="sizes">
             <button class="size" data-size="0" title="Petit" aria-label="Petit pinceau"><b style="--d:.45rem"></b></button>
             <button class="size" data-size="1" title="Moyen" aria-label="Pinceau moyen"><b style="--d:.8rem"></b></button>
@@ -170,19 +176,19 @@
           <svg class="ic"><use id="sym-use" href="#i-sym1"/></svg>
           <span><b>Symétrie</b><small id="sym-label">gauche-droite</small></span>
         </button>
-        <section class="sec">
-          <h3 title="Couleur des outils qui posent de la matière et de « Peindre »">Couleur</h3>
+        <section id="sec-color" class="sec">
+          <h3>Couleur <small>pour poser et peindre</small></h3>
           <div id="colors" class="colors"></div>
         </section>
         <section class="sec">
           <h3>Toute la forme</h3>
-          <div class="grid2">
+          <div class="grid2 grid3">
             <button class="mini" data-scale-all="1,1.15,1" title="Plus haut"><svg class="ic"><use href="#i-up"/></svg>Haut</button>
             <button class="mini" data-scale-all="1,0.87,1" title="Plus bas"><svg class="ic"><use href="#i-down"/></svg>Bas</button>
             <button class="mini" data-scale-all="1.15,1,1.15" title="Plus large">&#8596; Large</button>
             <button class="mini" data-scale-all="0.87,1,0.87" title="Plus fin">&#8594;&#8592; Fin</button>
+            <button id="btn-smooth-all" class="mini" title="Lisser toute la sculpture"><svg class="ic"><use href="#i-sparkle"/></svg>Lisser</button>
           </div>
-          <button id="btn-smooth-all" class="mini full" title="Lisser toute la sculpture"><svg class="ic"><use href="#i-sparkle"/></svg>Tout lisser</button>
         </section>
       </div>
     </aside>
@@ -349,37 +355,13 @@
     <div class="card">
       <h2>Options</h2>
       <p class="tiny">Tes réglages sont mémorisés sur cet ordinateur : ils seront les mêmes à la prochaine ouverture.</p>
+      <h3 class="opt-sec">Mon ordinateur</h3>
       <div class="group-title">Performances <small>(choisis selon ton ordinateur ; tu peux ensuite régler chaque option)</small></div>
       <div id="opt-perf" class="row sizes-txt">
         <button class="seg-btn" data-v="min">Très faible<br><small>vieux PC, tablette lente</small></button>
         <button class="seg-btn" data-v="low">Faible<br><small>économie</small></button>
         <button class="seg-btn" data-v="mid">Normal<br><small>équilibré</small></button>
         <button class="seg-btn" data-v="high">Élevé<br><small>détaillé, lumières</small></button>
-      </div>
-      <div class="group-title">Zone de travail (plateau)</div>
-      <div id="opt-world" class="row sizes-txt">
-        <button class="seg-btn" data-v="100">10 cm<br><small>légère</small></button>
-        <button class="seg-btn" data-v="150">15 cm<br><small>plus de place</small></button>
-        <button class="seg-btn" data-v="200">20 cm<br><small>très grande</small></button>
-      </div>
-      <div class="row world-custom">
-        <label for="opt-world-cm">Autre taille :</label>
-        <input id="opt-world-cm" type="number" min="6" max="40" step="0.5" inputmode="decimal" aria-label="Taille du plateau en centimètres">
-        <span>cm</span>
-        <button id="opt-world-ok" class="mini" title="Appliquer cette taille">OK</button>
-      </div>
-      <p id="world-info" class="tiny"></p>
-      <div class="group-title">Taille de l'interface <small>(s'adapte déjà à ton écran ; « Petite » laisse plus de place à la 3D)</small></div>
-      <div id="opt-ui" class="row sizes-txt">
-        <button class="seg-btn" data-v="0.85">Petite</button>
-        <button class="seg-btn" data-v="1">Normale</button>
-        <button class="seg-btn" data-v="1.2">Grande</button>
-        <button class="seg-btn" data-v="1.4">Très grande</button>
-      </div>
-      <div class="group-title">Place des outils <small>(écran en largeur)</small></div>
-      <div id="opt-side" class="row sizes-txt">
-        <button class="seg-btn" data-v="left">Outils à gauche</button>
-        <button class="seg-btn" data-v="right">Outils à droite</button>
       </div>
       <div class="group-title">Résolution de la sculpture</div>
       <div id="opt-res" class="row sizes-txt">
@@ -401,6 +383,34 @@
         <button class="seg-btn" data-v="1">Normale</button>
         <button class="seg-btn" data-v="1.4">Haute<br><small>plus nette</small></button>
       </div>
+      <h3 class="opt-sec">Zone de travail</h3>
+      <div class="group-title">Zone de travail (plateau)</div>
+      <div id="opt-world" class="row sizes-txt">
+        <button class="seg-btn" data-v="100">10 cm<br><small>légère</small></button>
+        <button class="seg-btn" data-v="150">15 cm<br><small>plus de place</small></button>
+        <button class="seg-btn" data-v="200">20 cm<br><small>très grande</small></button>
+      </div>
+      <div class="row world-custom">
+        <label for="opt-world-cm">Autre taille :</label>
+        <input id="opt-world-cm" type="number" min="6" max="40" step="0.5" inputmode="decimal" aria-label="Taille du plateau en centimètres">
+        <span>cm</span>
+        <button id="opt-world-ok" class="mini" title="Appliquer cette taille">OK</button>
+      </div>
+      <p id="world-info" class="tiny"></p>
+      <h3 class="opt-sec">Interface</h3>
+      <div class="group-title">Taille de l'interface <small>(s'adapte déjà à ton écran ; « Petite » laisse plus de place à la 3D)</small></div>
+      <div id="opt-ui" class="row sizes-txt">
+        <button class="seg-btn" data-v="0.85">Petite</button>
+        <button class="seg-btn" data-v="1">Normale</button>
+        <button class="seg-btn" data-v="1.2">Grande</button>
+        <button class="seg-btn" data-v="1.4">Très grande</button>
+      </div>
+      <div class="group-title">Place des outils <small>(écran en largeur)</small></div>
+      <div id="opt-side" class="row sizes-txt">
+        <button class="seg-btn" data-v="left">Outils à gauche</button>
+        <button class="seg-btn" data-v="right">Outils à droite</button>
+      </div>
+      <h3 class="opt-sec">Outils</h3>
       <div class="group-title">Stylet : la pression change…</div>
       <div id="opt-pen" class="row sizes-txt">
         <button class="seg-btn" data-v="off">Rien</button>
@@ -413,6 +423,7 @@
         <button class="seg-btn" data-v="1">Oui<br><small>colle / creuse en direct</small></button>
         <button class="seg-btn" data-v="0">Non<br><small>plus rapide</small></button>
       </div>
+      <h3 class="opt-sec">Export</h3>
       <div class="group-title">Maillage d'export par défaut</div>
       <div id="opt-export" class="row sizes-txt">
         <button class="seg-btn" data-v="std">Standard</button>
@@ -470,10 +481,10 @@
 
   <noscript><div class="modal"><div class="card small"><h2>Oups</h2><p>Pâte3D a besoin de JavaScript pour fonctionner.</p></div></div></noscript>
 
-  <script src="js/sound.js?v=40"></script>
-  <script src="js/starters.js?v=40"></script>
-  <script src="js/clay.js?v=40"></script>
-  <script src="js/io.js?v=40"></script>
-  <script src="js/app.js?v=40"></script>
+  <script src="js/sound.js?v=46"></script>
+  <script src="js/starters.js?v=46"></script>
+  <script src="js/clay.js?v=46"></script>
+  <script src="js/io.js?v=46"></script>
+  <script src="js/app.js?v=46"></script>
 </body>
 </html>

@@ -15,19 +15,21 @@ Copier le dossier tel quel sur un serveur web : `index.html`, `manifest.webmanif
 - Les workers (export hors du fil principal) demandent un vrai serveur web (`http(s)://`) ; en `file://` l'export se fait sur le fil principal.
 
 ## Disposition (tous les outils sont toujours visibles)
-- **Colonne de gauche = navigation + outils**, de haut en bas :
-  - **Navigation** (repliable avec la petite flèche) : **sphère 3D XYZ** (X rouge = gauche-droite, Y vert = devant-derrière, Z bleu = haut-bas, comme
-    dans l'impression 3D) — on la **fait glisser pour tourner**, on **touche un axe pour regarder depuis cet axe** ; boutons de rotation
-    (violet) et d'inclinaison (bleu), **curseur de zoom** + loupes (vert) + **molette** (qui rapproche de l'endroit visé), vues Devant / Côté /
-    Dessus (orange) et accueil (rose).
-  - **Outils** : Ajouter, Enlever, Élastique, Tirer, Lisser, Aplatir, puis (séparés) Tampon et **Peindre**. Toucher **Ajouter** ou **Enlever** ouvre le menu des
-    pinceaux en bas de l'écran : *poser / retirer* (Ajouter, Enlever, Brosse, Sillon) puis *déformer* (Gonfler, Pincer, Pousser, Combler). Le bouton de gauche
-    reste allumé pour la famille du pinceau choisi.
-  - **Formes** et **Importer** (« objets » qu'on place au lieu de sculpter), en petits boutons tout en bas.
-- **Réglages, à droite** : taille et force propres à chaque outil, 3 tailles rapides, **symétrie** (l'icône montre la symétrie choisie : un point,
-  deux points de part et d'autre d'un axe, quatre points, étoile à six points), palette de 8 couleurs + **couleurs de ton choix** (bouton +, jusqu'à 40, mémorisées), « Toute la forme » (plus haut / bas / large / fin, tout lisser).
-- **Boutons colorés** : chaque famille de boutons a sa couleur (barre du haut, navigation, outils) pour s'y repérer d'un coup d'œil.
-- En portrait, la navigation devient une carte en haut à gauche et les outils une grille en bas.
+Principe : **je choisis à gauche, je règle à droite, je varie en bas.**
+- **Barre du haut** : historique (Oups, Refaire) | fichier (Nouveau, Importer) ; à droite aide, options, sons et **Imprimer 3D** (export STL / OBJ / PLY).
+- **Colonne de gauche** : **Navigation** (repliable : sphère 3D XYZ qu'on fait glisser, boutons de rotation, zoom, vues Devant / Côté / Dessus, accueil), puis les outils
+  en trois groupes titrés :
+  - **Sculpter** : Ajouter, Enlever, Élastique, Tirer, Lisser, Aplatir ;
+  - **Décorer** : Tampon, Peindre ;
+  - **Objets à poser** : Formes, Importer.
+  Toucher **Ajouter** ou **Enlever** ouvre en bas le **menu des pinceaux**, en deux groupes légendés : *Poser et retirer* (Ajouter, Enlever, Brosse, Sillon) et *Déformer*
+  (Gonfler, Pincer, Pousser, Combler). Le bouton de gauche reste allumé pour la famille du pinceau choisi.
+- **Réglages, à droite** : une pastille rappelle **l'outil actif** (icône et couleur de l'outil), puis *Taille et force* (3 tailles rapides + curseurs, propres à chaque outil),
+  *Symétrie* (l'icône montre la symétrie choisie), *Couleur* (palette + « + » ; atténuée quand l'outil ne s'en sert pas : seuls Ajouter, Brosse, Tampon, Tirer et Peindre colorent),
+  *Toute la forme* (plus haut / bas / large / fin, lisser tout).
+- **Boutons colorés** : chaque outil a sa couleur, la même dans la colonne de gauche, le menu des pinceaux et la pastille de droite.
+- En portrait, la navigation devient une carte en haut à gauche et les outils une grille en bas ; sur téléphone en paysage les titres de groupes disparaissent.
+- **Options** regroupées par thème : *Mon ordinateur* (performances, résolution, affichage, netteté), *Zone de travail*, *Interface*, *Outils* (stylet, aperçu du booléen), *Export*.
 
 ## Raccourcis clavier
 | Touche | Effet |

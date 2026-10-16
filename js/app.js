@@ -446,8 +446,12 @@
   const FAMILY = { add: ['add', 'layer', 'inflate', 'pinch', 'nudge', 'fill'], remove: ['remove', 'groove'] };
   const TOOL_KEYS = ['add', 'remove', 'stretch', 'pull', 'smooth', 'flatten', 'stamp', 'paint'];
   const brushBar = $('#brush-bar');
+  const BRUSH_CAPS = ['Poser et retirer', 'Déformer'];
   BRUSH_GROUPS.forEach((grp, gi) => {
     if (gi) { const sep = document.createElement('i'); sep.className = 'brush-sep'; sep.setAttribute('aria-hidden', 'true'); brushBar.appendChild(sep); }
+    const box = document.createElement('div'), row = document.createElement('div'), cap = document.createElement('small');
+    box.className = 'brush-grp'; row.className = 'brush-row'; cap.className = 'brush-cap'; cap.textContent = BRUSH_CAPS[gi];
+    box.appendChild(cap); box.appendChild(row); brushBar.appendChild(box);
     grp.forEach((b) => {
       const el = document.createElement('button');
       el.className = 'brush-btn'; el.dataset.brush = b.id;
@@ -455,7 +459,7 @@
       el.title = TOOL_INFO[b.id][0] + ' : ' + TOOL_INFO[b.id][1];
       el.innerHTML = '<svg class="ic"><use href="#' + b.icon + '"/></svg><span>' + TOOL_INFO[b.id][0] + '</span>';
       el.addEventListener('click', () => setTool(b.id));
-      brushBar.appendChild(el);
+      row.appendChild(el);
     });
   });
   let brushBarOpen = false;
@@ -520,7 +524,22 @@
   $$('.tool[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
   const SIZE_PRESETS = [4, 7, 12];
+  const TOOL_LOOK = {
+    add: ['i-add', '#22c55e', '#e4f7ea', '#15803d'], remove: ['i-remove', '#ef4444', '#fde9e9', '#b91c1c'],
+    stretch: ['i-stretch', '#06b6d4', '#dff6fb', '#0e7490'], pull: ['i-pull', '#3b82f6', '#e6effe', '#1d4ed8'],
+    smooth: ['i-smooth', '#eab308', '#fdf5d6', '#a16207'], flatten: ['i-flatten', '#84cc16', '#eef8d9', '#4d7c0f'],
+    stamp: ['i-stamp', '#f97316', '#feebdc', '#c2410c'], paint: ['i-paint', '#e11d48', '#fde4ea', '#9f1239']
+  };
+  BRUSH_GROUPS.flat().forEach((b) => { if (!TOOL_LOOK[b.id]) TOOL_LOOK[b.id] = [b.icon, b.c, b.cs, b.cd]; });
+  const COLOR_TOOLS = new Set(['add', 'layer', 'stamp', 'pull', 'paint']);        // les outils qui posent de la matière ou peignent
   function syncBrushUI() {
+    const look = TOOL_LOOK[tool], chip = $('#side-tool');
+    if (look) {
+      chip.style.setProperty('--c', look[1]); chip.style.setProperty('--cs', look[2]); chip.style.setProperty('--cd', look[3]);
+      $('#side-tool-ic').setAttribute('href', '#' + look[0]);
+      $('#side-tool-name').textContent = (TOOL_INFO[tool] || [tool])[0];
+    }
+    $('#sec-color').classList.toggle('muted', !COLOR_TOOLS.has(tool));
     const on = tool !== 'orbit';
     const st = setOf(tool);
     $('#brush-size').disabled = $('#brush-force').disabled = !on;
@@ -2025,7 +2044,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=40');
+        exportWorker = new Worker('js/exportWorker.js?v=46');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }
