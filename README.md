@@ -20,7 +20,9 @@ Copier le dossier tel quel sur un serveur web : `index.html`, `manifest.webmanif
     dans l'impression 3D) — on la **fait glisser pour tourner**, on **touche un axe pour regarder depuis cet axe** ; boutons de rotation
     (violet) et d'inclinaison (bleu), **curseur de zoom** + loupes (vert) + **molette** (qui rapproche de l'endroit visé), vues Devant / Côté /
     Dessus (orange) et accueil (rose).
-  - **Outils** : Ajouter, Enlever, Élastique, Tirer, Lisser, Aplatir, Tampon et **Pinceaux** (menu en bas de l'écran, voir plus bas).
+  - **Outils** : Ajouter, Enlever, Élastique, Tirer, Lisser, Aplatir, puis (séparés) Tampon et **Peindre**. Toucher **Ajouter** ou **Enlever** ouvre le menu des
+    pinceaux en bas de l'écran : *poser / retirer* (Ajouter, Enlever, Brosse, Sillon) puis *déformer* (Gonfler, Pincer, Pousser, Combler). Le bouton de gauche
+    reste allumé pour la famille du pinceau choisi.
   - **Formes** et **Importer** (« objets » qu'on place au lieu de sculpter), en petits boutons tout en bas.
 - **Réglages, à droite** : taille et force propres à chaque outil, 3 tailles rapides, **symétrie** (l'icône montre la symétrie choisie : un point,
   deux points de part et d'autre d'un axe, quatre points, étoile à six points), palette de 8 couleurs + **couleurs de ton choix** (bouton +, jusqu'à 40, mémorisées), « Toute la forme » (plus haut / bas / large / fin, tout lisser).
@@ -55,7 +57,8 @@ molette = zoom, bouton du milieu = déplacer.
 | Tampon (7) | 11 motifs (boule, cube, cône, cœur, étoile, fleur, patte, lune, goutte, diamant, anneau) orientés selon la surface. **Rester appuyé et glisser règle la taille** (aperçu translucide + taille en cm) ; le bouton « Série » colle plusieurs tampons le long du geste |
 | Formes | 13 formes simples + toutes les formes de départ (voir plus bas) : **un clic sur la forme la pose** (visible en transparence, même cachée dans l'argile). **Le survol ne la déplace jamais** : on touche l'endroit où la poser (ou on la glisse ; au-delà du bord du plateau elle va au bord le plus proche), on change taille / rotation 3 axes / hauteur, « Coller » ou « Creuser », puis **Poser** (ou Entrée). Avec la symétrie, la copie « miroir » est montrée en transparence ; elle est active par défaut pour un objet posé sur la sculpture, inactive sur le plateau, et le bouton « Miroir » reprend la main. Pendant le placement, les outils sont masqués pour laisser la place à la scène |
 | Importer | fichier STL ou OBJ (bouton ou glisser-déposer), même placement que les formes |
-| Pinceaux (8) | menu en bas de l'écran : **Peindre** (colore la surface sans changer la forme ; Ctrl : retour à la terre cuite), **Brosse** (fine couche régulière), **Gonfler** (la surface avance le long de sa normale), **Pincer** (la matière se rassemble et monte : arête, pli), **Pousser** (déplace la matière dans le sens du geste), **Sillon** (trait fin creusé), **Combler** (remplit creux et trous sans toucher aux bosses). Ils ont chacun leur taille et leur force, la symétrie, le stylet et Ctrl (inverse) |
+| Peindre (8) | colore la surface sans changer la forme (Ctrl : retour à la terre cuite) |
+| Pinceaux | menu du bas, ouvert par Ajouter / Enlever : **Brosse** (fine couche régulière), **Gonfler** (la surface avance le long de sa normale), **Pincer** (la matière se rassemble et monte : arête, pli), **Pousser** (déplace la matière dans le sens du geste), **Sillon** (trait fin creusé), **Combler** (remplit creux et trous sans toucher aux bosses). Ils ont chacun leur taille et leur force, la symétrie, le stylet et Ctrl (inverse) |
 | Navigation | un doigt sur le fond = orbite, deux doigts = zoom + déplacement, double-touche = on s'approche |
 
 **Pas de traînées dans la perspective.** Un trait ne peut pas « sauter » en profondeur (par exemple du bord de la sculpture au plateau
@@ -159,11 +162,11 @@ Chaque voxel garde sa couleur (numéro de palette, 1 octet par voxel) : le maill
 au bout de l'arête). Ajouter, Brosse, Tampon, Tirer et les formes posées utilisent la couleur choisie ; **Peindre** colore la couche de surface
 (3 voxels) sans toucher à la forme. Élastique / Pincer / Pousser déplacent les couleurs avec la matière, Lisser / Gonfler donnent à la matière
 nouvelle la couleur de sa voisine, annuler / rétablir restaurent aussi les couleurs. Sauvegarde : `N:L|champ|couleurs|palette` (les anciennes
-sauvegardes sans couleurs prennent la couleur qui était choisie). L'export STL/OBJ ne contient pas les couleurs.
+sauvegardes sans couleurs prennent la couleur qui était choisie). L'export **OBJ** écrit une couleur par sommet (`v x y z r g b`) et le **PLY** aussi (Blender, MeshLab…) ; le STL n'a pas de couleurs.
 
 ## Valeurs par défaut
-Plateau de **15 cm** et résolution **fine (112 voxels / 10 cm, grille plafonnée à 160³)**, sauf appareil modeste (réglages bas). Une migration
-unique (`opts.v = 2`) applique ces valeurs aux réglages déjà mémorisés ; ensuite les options de l'utilisateur font foi.
+Plateau de **20 cm** et résolution **fine (112 voxels / 10 cm, grille plafonnée à 160³)**, sauf appareil modeste (réglages bas). Une migration
+unique (`opts.v = 3`) applique ces valeurs aux réglages déjà mémorisés ; ensuite les options de l'utilisateur font foi.
 
 ## Aperçu du booléen (Coller / Creuser)
 Pendant le placement d'une forme, le résultat est calculé pour de vrai dans la sculpture (forme + copies miroir + lissage), puis annulé au coup suivant
@@ -171,3 +174,9 @@ Pendant le placement d'une forme, le résultat est calculé pour de vrai dans la
 Un seul calcul à la fois, espacé de 3× son propre coût (80 ms au minimum) ; ~3 ms pour une forme de 32 000 triangles à 160³. Option « Aperçu du résultat
 en posant une forme » (Options ; désactivé par les préréglages « Très faible » et « Faible » et sur appareil modeste). L'aperçu n'est jamais enregistré
 (sauvegarde, export, annuler/rétablir l'annulent d'abord).
+
+## Forces, formes de départ
+Forces par défaut plus douces (0,2 à 0,35 ; une remise à zéro unique des forces enregistrées, `pate3d.toolsv`). Gonfler vise la surface *d'avant* le geste
+(le trait ne dérive plus vers la caméra) et avance de R·(0,012 + 0,1·force) par pas. « Nouveau » : option **En l'air** (la forme flotte 22 mm au-dessus du plateau,
+`Clay.reset(id, lift)`), Boule en l'air, chat / chien / cheval / ours debout sur quatre pattes, oiseau en vol. Au placement depuis une surface vide, le panneau
+s'ouvre avec toutes ses commandes (haut / bas / déplacement).

@@ -23,9 +23,9 @@
 
   /* ---- options générales (mémorisées sur l'ordinateur : retrouvées à chaque ouverture) ---- */
   const lowEnd = (navigator.deviceMemory && navigator.deviceMemory <= 2) || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
-  const OPT_V = 2;                                  // version des réglages : la 2 passe au plateau de 15 cm et à la résolution fine
+  const OPT_V = 3;                                  // version des réglages : la 2 passe à la résolution fine, la 3 au plateau de 20 cm
   const opts = {
-    res: lowEnd ? 56 : 112, world: 150, display: lowEnd ? 'eco' : 'norm', penMode: 'force', exportQ: 'dense',
+    res: lowEnd ? 56 : 112, world: 200, display: lowEnd ? 'eco' : 'norm', penMode: 'force', exportQ: 'dense',
     ui: 1, side: 'left', sideOpen: true, sideOpenP: false, navOpen: true, stampSeries: false,
     sharp: 1, perf: lowEnd ? 'low' : 'custom', sym: 'x', stamp: 'star', boolPreview: !lowEnd, v: OPT_V
   };
@@ -33,7 +33,7 @@
     const saved = JSON.parse(localStorage.getItem('pate3d.opts') || '{}');
     if ('eco' in saved && !('display' in saved)) saved.display = saved.eco ? 'eco' : 'norm';
     if ('pen' in saved && !('penMode' in saved)) saved.penMode = saved.pen ? 'force' : 'off';
-    if ((+saved.v || 0) < OPT_V) { saved.world = 150; if (!lowEnd) { saved.res = 112; saved.perf = 'custom'; } }   // nouveaux réglages par défaut, une seule fois
+    if ((+saved.v || 0) < OPT_V) { saved.world = 200; if (!lowEnd) { saved.res = 112; saved.perf = 'custom'; } }   // nouveaux réglages par défaut, une seule fois
     Object.assign(opts, saved);
   } catch (e) { /* ignore */ }
   opts.v = OPT_V;
@@ -42,7 +42,7 @@
   if (['off', 'force', 'size', 'both'].indexOf(opts.penMode) < 0) opts.penMode = 'force';
   if (![40, 56, 80, 112].includes(+opts.res)) opts.res = lowEnd ? 56 : 112;
   opts.res = +opts.res;
-  opts.world = Number.isFinite(+opts.world) && +opts.world >= 60 && +opts.world <= 400 ? +opts.world : 150;
+  opts.world = Number.isFinite(+opts.world) && +opts.world >= 60 && +opts.world <= 400 ? +opts.world : 200;
   if (![0.6, 1, 1.4].includes(+opts.sharp)) opts.sharp = 1;
   opts.sharp = +opts.sharp;
   if (['off', 'x', 'xz', 'rot6'].indexOf(opts.sym) < 0) opts.sym = 'x';
@@ -377,12 +377,15 @@
 
   /* taille (rayon, mm) et force (0-1) propres à chaque outil */
   const toolSet = {};
-  ['add', 'remove', 'pull', 'stretch', 'flatten', 'smooth', 'stamp', 'layer', 'inflate', 'pinch', 'nudge', 'groove', 'fill', 'paint'].forEach((t) => {
-    toolSet[t] = { size: ['stretch', 'stamp', 'layer', 'nudge'].includes(t) ? 8 : 7, force: 0.5 };
+  const DEF_FORCE = { add: 0.3, remove: 0.3, pull: 0.3, stretch: 0.35, flatten: 0.35, smooth: 0.35, stamp: 0.3, layer: 0.3, inflate: 0.2, pinch: 0.3, nudge: 0.35, groove: 0.3, fill: 0.3, paint: 0.5 };
+  Object.keys(DEF_FORCE).forEach((t) => {
+    toolSet[t] = { size: ['stretch', 'stamp', 'layer', 'nudge'].includes(t) ? 8 : 7, force: DEF_FORCE[t] };
   });
   try {
     const sv = JSON.parse(localStorage.getItem('pate3d.tools') || '{}');
-    Object.keys(toolSet).forEach((t) => { if (sv[t]) Object.assign(toolSet[t], sv[t]); });
+    const newForces = localStorage.getItem('pate3d.toolsv') === '2';          // v2 : forces par défaut plus douces (réglages anciens : forces remises une fois)
+    Object.keys(toolSet).forEach((t) => { if (sv[t]) { if (!newForces) delete sv[t].force; Object.assign(toolSet[t], sv[t]); } });
+    localStorage.setItem('pate3d.toolsv', '2');
   } catch (e) { /* ignore */ }
   const saveTools = () => { try { localStorage.setItem('pate3d.tools', JSON.stringify(toolSet)); } catch (e) { /* ignore */ } };
   const setOf = (t) => toolSet[t] || toolSet.add;
@@ -408,8 +411,8 @@
     layer: 0xd97706, inflate: 0xec4899, pinch: 0x8b5cf6, nudge: 0x0ea5e9, groove: 0x64748b, fill: 0x14b8a6, paint: 0xe11d48, orbit: 0x000000
   };
   const TOOL_INFO = {
-    add: ['Ajouter', 'pose de la matière, la force règle l’épaisseur. Ctrl : enlever.'],
-    remove: ['Enlever', 'gratte et creuse la matière. Ctrl : ajouter.'],
+    add: ['Ajouter', 'pose de la matière, la force règle l’épaisseur. Ctrl : enlever. Les autres pinceaux sont en bas.'],
+    remove: ['Enlever', 'gratte et creuse la matière. Ctrl : ajouter. Les autres pinceaux sont en bas.'],
     stretch: ['Élastique', 'attrape la pâte et tire-la comme un élastique : elle suit ton doigt, même très loin.'],
     pull: ['Tirer', 'fait sortir une pointe, une corne, une queue.'],
     smooth: ['Lisser', 'arrondit et adoucit les bosses. Astuce : maintiens Maj avec n’importe quel outil.'],
@@ -424,25 +427,36 @@
     paint: ['Peindre', 'colore la surface avec la couleur choisie, sans changer la forme. Ctrl : remet la terre cuite.']
   };
   /* pinceaux supplémentaires (menu en bas de l'écran) */
-  const BRUSHES = [
-    { id: 'paint', icon: 'i-paint', c: '#e11d48', cs: '#fde4ea', cd: '#9f1239' },
-    { id: 'layer', icon: 'i-layer', c: '#d97706', cs: '#fdeccf', cd: '#b45309' },
-    { id: 'inflate', icon: 'i-inflate', c: '#ec4899', cs: '#fde6f2', cd: '#be185d' },
-    { id: 'pinch', icon: 'i-pinch', c: '#8b5cf6', cs: '#ede8fe', cd: '#6d28d9' },
-    { id: 'nudge', icon: 'i-nudge', c: '#0ea5e9', cs: '#dff1fb', cd: '#0369a1' },
-    { id: 'groove', icon: 'i-groove', c: '#64748b', cs: '#e5ebf3', cd: '#3b4d68' },
-    { id: 'fill', icon: 'i-fill', c: '#14b8a6', cs: '#d7f5ef', cd: '#0f766e' }
+  /* menu des pinceaux (en bas) : il apparaît dès qu'on choisit Ajouter ou Enlever. Deux groupes : poser / retirer, puis déformer. */
+  const BRUSH_GROUPS = [
+    [
+      { id: 'add', icon: 'i-add', c: '#22c55e', cs: '#e4f7ea', cd: '#15803d' },
+      { id: 'remove', icon: 'i-remove', c: '#ef4444', cs: '#fde9e9', cd: '#b91c1c' },
+      { id: 'layer', icon: 'i-layer', c: '#d97706', cs: '#fdeccf', cd: '#b45309' },
+      { id: 'groove', icon: 'i-groove', c: '#64748b', cs: '#e5ebf3', cd: '#3b4d68' }
+    ], [
+      { id: 'inflate', icon: 'i-inflate', c: '#ec4899', cs: '#fde6f2', cd: '#be185d' },
+      { id: 'pinch', icon: 'i-pinch', c: '#8b5cf6', cs: '#ede8fe', cd: '#6d28d9' },
+      { id: 'nudge', icon: 'i-nudge', c: '#0ea5e9', cs: '#dff1fb', cd: '#0369a1' },
+      { id: 'fill', icon: 'i-fill', c: '#14b8a6', cs: '#d7f5ef', cd: '#0f766e' }
+    ]
   ];
-  const BRUSH_IDS = BRUSHES.map((b) => b.id);
-  const TOOL_KEYS = ['add', 'remove', 'stretch', 'pull', 'smooth', 'flatten', 'stamp'];
+  const BRUSH_IDS = BRUSH_GROUPS.flat().map((b) => b.id);
+  /* le bouton de gauche (Ajouter / Enlever) reste allumé quand on prend un pinceau de sa famille */
+  const FAMILY = { add: ['add', 'layer', 'inflate', 'pinch', 'nudge', 'fill'], remove: ['remove', 'groove'] };
+  const TOOL_KEYS = ['add', 'remove', 'stretch', 'pull', 'smooth', 'flatten', 'stamp', 'paint'];
   const brushBar = $('#brush-bar');
-  BRUSHES.forEach((b) => {
-    const el = document.createElement('button');
-    el.className = 'brush-btn'; el.dataset.tool = b.id;
-    el.style.setProperty('--c', b.c); el.style.setProperty('--cs', b.cs); el.style.setProperty('--cd', b.cd);
-    el.title = TOOL_INFO[b.id][0] + ' : ' + TOOL_INFO[b.id][1];
-    el.innerHTML = '<svg class="ic"><use href="#' + b.icon + '"/></svg><span>' + TOOL_INFO[b.id][0] + '</span>';
-    brushBar.appendChild(el);
+  BRUSH_GROUPS.forEach((grp, gi) => {
+    if (gi) { const sep = document.createElement('i'); sep.className = 'brush-sep'; sep.setAttribute('aria-hidden', 'true'); brushBar.appendChild(sep); }
+    grp.forEach((b) => {
+      const el = document.createElement('button');
+      el.className = 'brush-btn'; el.dataset.brush = b.id;
+      el.style.setProperty('--c', b.c); el.style.setProperty('--cs', b.cs); el.style.setProperty('--cd', b.cd);
+      el.title = TOOL_INFO[b.id][0] + ' : ' + TOOL_INFO[b.id][1];
+      el.innerHTML = '<svg class="ic"><use href="#' + b.icon + '"/></svg><span>' + TOOL_INFO[b.id][0] + '</span>';
+      el.addEventListener('click', () => setTool(b.id));
+      brushBar.appendChild(el);
+    });
   });
   let brushBarOpen = false;
 
@@ -460,9 +474,8 @@
   }
   function syncToolHighlight() {
     const shown = resolveTool(tool, keyMods).tool;
-    $$('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === shown));
-    $('#btn-brushes').classList.toggle('active', BRUSH_IDS.includes(shown));
-    $('#btn-brushes').classList.toggle('open', brushBarOpen);
+    $$('.tool[data-tool]').forEach((b) => b.classList.toggle('active', (FAMILY[b.dataset.tool] || [b.dataset.tool]).includes(shown)));
+    $$('.brush-btn').forEach((b) => b.classList.toggle('active', b.dataset.brush === shown));
   }
 
   let hintTimer = 0;
@@ -488,13 +501,6 @@
     const c = CURSOR_COLORS[t] || 0x22c55e;
     cursorMat.color.setHex(c); ringMat.color.setHex(c);
   }
-  function setBrushBar(open) {
-    brushBarOpen = open;
-    brushBar.hidden = !open || !!placement;
-    syncToolHighlight();
-    updateViewOffset();
-    invalidate();
-  }
   function setTool(name) {
     if (stroke) endStroke();
     tool = name;
@@ -511,8 +517,7 @@
     updateViewOffset();
     invalidate();
   }
-  $$('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
-  $('#btn-brushes').addEventListener('click', () => setBrushBar(!brushBarOpen));
+  $$('.tool[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
   const SIZE_PRESETS = [4, 7, 12];
   function syncBrushUI() {
@@ -664,8 +669,7 @@
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (key === 'Enter' && placement && !modalOpen() && !/BUTTON|INPUT/.test((e.target || {}).tagName || '')) { validatePlacement(); return; }
     if (modalOpen()) return;
-    if (/^[1-7]$/.test(key)) { setTool(TOOL_KEYS[+key - 1]); return; }
-    if (key === '8') { setBrushBar(!brushBarOpen); return; }
+    if (/^[1-8]$/.test(key)) { setTool(TOOL_KEYS[+key - 1]); return; }
     if (key === '+' || key === '=' || key === 'PageUp') { goTo({ dist: view.dist * 0.85 }); return; }
     if (key === '-' || key === '_' || key === 'PageDown') { goTo({ dist: view.dist / 0.85 }); return; }
     if (key === 'h') { goTo(Object.assign(defaultView(), { az: nearestAngle(view.az, 0) })); return; }
@@ -812,7 +816,7 @@
 
   /* outils qui peuvent aussi travailler sur le plateau / qui visent la surface en cours de déformation / sans lissage final */
   const FLOOR_OK = new Set(['add', 'layer', 'stamp']);
-  const ON_CURRENT = new Set(['smooth', 'fill', 'inflate', 'pinch', 'nudge', 'paint']);
+  const ON_CURRENT = new Set(['smooth', 'fill', 'pinch', 'nudge', 'paint']);
   const NO_RELAX = new Set(['smooth', 'fill', 'stretch', 'pinch', 'nudge', 'inflate', 'paint']);
   const allowed = (h, t) => !!h && h.c >= MIN_C && (FLOOR_OK.has(t || tool) || !h.floor);
 
@@ -1041,7 +1045,7 @@
       alongPath(c0, R * 0.35, (c) => paintM(c, g.R, idx));
       showCursor(c0, g.R, n0, ring);
     } else if (t === 'inflate') {
-      const amt = (stroke.inv ? -1 : 1) * R * (0.03 + 0.2 * F('inflate'));
+      const amt = (stroke.inv ? -1 : 1) * R * (0.012 + 0.1 * F('inflate'));
       if (!stroke.last) Sfx.smooth();
       alongPath(c0, R * 0.4, (c) => inflateM(c, g.R, amt));
       showCursor(c0, g.R, n0, ring);
@@ -1513,8 +1517,9 @@
     $('#place-name').textContent = name;
     $('#pl-add').classList.add('active');
     $('#pl-carve').classList.remove('active');
-    $('#place').classList.remove('expanded');
-    $('#pl-more').textContent = 'Plus d’options';
+    const wide = clay.isEmpty();                  // surface vide : on place la forme à la main, donc haut / bas / déplacement sont déjà là
+    $('#place').classList.toggle('expanded', wide);
+    $('#pl-more').textContent = wide ? 'Moins d’options' : 'Plus d’options';
     $('#pl-size').max = String(Math.round(0.9 * WL));
     setPlacing(true);
     setPlacementMode('move');
@@ -1815,11 +1820,16 @@
     });
     starterList.appendChild(h); starterList.appendChild(grid);
   });
+  const airBtn = $('#start-air');
+  let startAir = false;
+  function syncAir() { airBtn.classList.toggle('active', startAir); airBtn.setAttribute('aria-pressed', String(startAir)); }
+  airBtn.addEventListener('click', () => { startAir = !startAir; syncAir(); });
+  syncAir();
   function startFrom(id) {
     closeModals();
     cancelPlacement();
     undoStack.length = 0; redoStack.length = 0;
-    clay.reset(id);
+    clay.reset(id, startAir ? 22 : 0);              // « en l'air » : la forme flotte 22 mm au-dessus du plateau (on peut ajouter dessous)
     refreshUndo();                                 // met aussi à jour l'état « surface vide »
     goTo(Object.assign(defaultView(), { az: nearestAngle(view.az, 0) }));
     scheduleSave();
@@ -2015,7 +2025,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=39');
+        exportWorker = new Worker('js/exportWorker.js?v=40');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }
@@ -2045,7 +2055,7 @@
     } else {
       st.className = 'status bad'; st.textContent = 'Il y a un petit souci dans la forme (' + m.problems + '). Lisse un peu et réessaie.';
     }
-    $('#dl-stl').disabled = $('#dl-obj').disabled = !m.manifold;
+    $('#dl-stl').disabled = $('#dl-obj').disabled = $('#dl-ply').disabled = !m.manifold;
     updatePrintStats();
   }
   function runExportSync() {
@@ -2060,14 +2070,14 @@
     const st = $('#print-status');
     st.className = 'status'; st.textContent = opts.exportQ === 'std' ? 'Vérification…' : 'Calcul du maillage lisse… (quelques secondes)';
     $('#print-stats').textContent = '';
-    $('#dl-stl').disabled = $('#dl-obj').disabled = true;
+    $('#dl-stl').disabled = $('#dl-obj').disabled = $('#dl-ply').disabled = true;
     $$('#print-quality .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.q === opts.exportQ));
     const plan = EXPORT_PLAN();
     pendingExport = { id: ++exportId, target: plan[0], iters: plan[1] };
     const w = getWorker();
     if (w) {
-      const field = clay.f.slice();
-      w.postMessage({ id: pendingExport.id, field, n: clay.resolution, L: clay.world, target: plan[0], iters: plan[1] }, [field.buffer]);
+      const field = clay.f.slice(), col = clay.col.slice();
+      w.postMessage({ id: pendingExport.id, field, col, pal: clay.pal, n: clay.resolution, L: clay.world, target: plan[0], iters: plan[1] }, [field.buffer, col.buffer]);
     } else runExportSync();
   }
   $$('#print-quality .seg-btn').forEach((b) => b.addEventListener('click', () => {
@@ -2081,7 +2091,8 @@
     updatePrintStats();
   }));
   $('#dl-stl').addEventListener('click', () => { if (exportMesh) { IO.download(IO.writeSTL(exportMesh, exportMm), 'ma-sculpture.stl'); Sfx.tada(); toast('Bravo ! Ton fichier est prêt.'); } });
-  $('#dl-obj').addEventListener('click', () => { if (exportMesh) { IO.download(IO.writeOBJ(exportMesh, exportMm), 'ma-sculpture.obj'); Sfx.tada(); toast('Bravo ! Ton fichier est prêt.'); } });
+  $('#dl-obj').addEventListener('click', () => { if (exportMesh) { IO.download(IO.writeOBJ(exportMesh, exportMm), 'ma-sculpture.obj'); Sfx.tada(); toast(exportMesh.hasColors ? 'Ton OBJ est prêt, avec ses couleurs !' : 'Bravo ! Ton fichier est prêt.'); } });
+  $('#dl-ply').addEventListener('click', () => { if (exportMesh) { IO.download(IO.writePLY(exportMesh, exportMm), 'ma-sculpture.ply'); Sfx.tada(); toast('Ton PLY en couleurs est prêt !'); } });
 
   /* ------------------------------------------------------------------ Démarrage */
   let loaded = false;

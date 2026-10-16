@@ -176,10 +176,20 @@ body.nav-closed .nav-main { grid-template-columns: var(--gz); justify-content: c
 .stamp-btn.series { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: .1rem; font-size: .62rem; font-weight: 700; background: var(--soft); width: 3.6rem; }
 .stamp-btn.series .ic { font-size: 1.3rem; }
 .stamp-btn.series.active { background: #ffd9b0; }
-.brush-bar { border-color: #8b5cf6; }
+.air-toggle { width: 100%; display: flex; align-items: center; gap: .7rem; text-align: left; padding: .5rem .8rem; margin: 0 0 .6rem; border-radius: 1rem; background: var(--soft); border: 2px dashed #b9c9e8; }
+.air-toggle .ic { font-size: 1.6rem; color: #3b82f6; }
+.air-toggle span { flex: 1; display: flex; flex-direction: column; gap: .1rem; }
+.air-toggle small { font-size: .72rem; color: #6b5a45; font-weight: 500; }
+.air-toggle .air-state { width: 2.6rem; height: 1.4rem; border-radius: 99rem; background: #d9d2c6; position: relative; flex: none; }
+.air-toggle .air-state::after { content: ''; position: absolute; left: .15rem; top: .15rem; width: 1.1rem; height: 1.1rem; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+.air-toggle.active { border-color: #3b82f6; border-style: solid; background: #e6effe; }
+.air-toggle.active .air-state { background: #3b82f6; }
+.air-toggle.active .air-state::after { left: 1.35rem; }
+.brush-bar { border-color: #d9c7ad; align-items: stretch; }
+.brush-sep { flex: none; width: 3px; margin: .2rem .3rem; border-radius: 3px; background: #ead9bd; }
 .brush-btn { width: 4.1rem; height: 3.9rem; min-width: 52px; border-radius: .9rem; background: var(--cs); color: var(--cd); border: 2px solid transparent; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: .15rem; font-size: .68rem; font-weight: 700; }
 .brush-btn .ic { font-size: 1.7rem; stroke-width: 2.1; }
-.brush-btn span { color: var(--ink); line-height: 1; }
+.brush-btn span { color: var(--ink); line-height: 1; font-size: .74rem; }
 .brush-btn:active { transform: scale(.94); }
 .brush-btn.active { background: var(--c); color: #fff; border-color: rgba(0, 0, 0, .12); }
 .brush-btn.active span { color: #fff; }
@@ -281,6 +291,7 @@ body.is-empty .objects .tool { outline: .2rem solid var(--c); outline-offset: .1
   body.placing, body.tools-right.placing { --lw: 0rem; --rw: 0rem; }
   .dock.left, body.tools-right .dock.left { left: var(--sl); right: var(--sr); top: auto; bottom: var(--sb); width: auto; max-height: none; overflow: visible; display: grid; grid-template-columns: repeat(5, 1fr); gap: .4rem; }
   .tool-grid, .objects, .obj-row { display: contents; }
+  .tool-sep { display: none; }
   .tool, .obj-row .tool { height: 4.2rem; flex-direction: column; gap: .25rem; }
   .tool .ic, .obj-row .tool .ic { font-size: 2rem; }
   .tool b, .obj-row .tool b { font-size: .82rem; }

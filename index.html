@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=39">
+  <link rel="stylesheet" href="css/style.css?v=40">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
     /* secours si le premier CDN est injoignable */
@@ -134,14 +134,15 @@
         </div>
       </section>
       <div class="tool-grid">
-        <button class="tool active" data-tool="add"     style="--c:#22c55e;--cs:#e4f7ea;--cd:#15803d" title="Ajouter de la matière (1) · Ctrl : enlever"><svg class="ic"><use href="#i-add"/></svg><b>Ajouter</b></button>
-        <button class="tool"        data-tool="remove"  style="--c:#ef4444;--cs:#fde9e9;--cd:#b91c1c" title="Gratter, creuser (2) · Ctrl : ajouter"><svg class="ic"><use href="#i-remove"/></svg><b>Enlever</b></button>
+        <button class="tool active" data-tool="add"     style="--c:#22c55e;--cs:#e4f7ea;--cd:#15803d" title="Ajouter de la matière (1) : les pinceaux apparaissent en bas · Ctrl : enlever"><svg class="ic"><use href="#i-add"/></svg><b>Ajouter</b></button>
+        <button class="tool"        data-tool="remove"  style="--c:#ef4444;--cs:#fde9e9;--cd:#b91c1c" title="Gratter, creuser (2) : les pinceaux apparaissent en bas · Ctrl : ajouter"><svg class="ic"><use href="#i-remove"/></svg><b>Enlever</b></button>
         <button class="tool"        data-tool="stretch" style="--c:#06b6d4;--cs:#dff6fb;--cd:#0e7490" title="Élastique : attrape et étire la matière comme de la pâte (3)"><svg class="ic"><use href="#i-stretch"/></svg><b>Élastique</b></button>
         <button class="tool"        data-tool="pull"    style="--c:#3b82f6;--cs:#e6effe;--cd:#1d4ed8" title="Tirer une corne, une queue (4)"><svg class="ic"><use href="#i-pull"/></svg><b>Tirer</b></button>
         <button class="tool"        data-tool="smooth"  style="--c:#eab308;--cs:#fdf5d6;--cd:#a16207" title="Lisser et arrondir (5) · maintiens Maj avec n'importe quel outil"><svg class="ic"><use href="#i-smooth"/></svg><b>Lisser</b></button>
         <button class="tool"        data-tool="flatten" style="--c:#84cc16;--cs:#eef8d9;--cd:#4d7c0f" title="Raboter : aplatir une surface (6)"><svg class="ic"><use href="#i-flatten"/></svg><b>Aplatir</b></button>
+        <div class="tool-sep" aria-hidden="true"></div>
         <button class="tool"        data-tool="stamp"   style="--c:#f97316;--cs:#feebdc;--cd:#c2410c" title="Coller des motifs (7)"><svg class="ic"><use href="#i-stamp"/></svg><b>Tampon</b></button>
-        <button id="btn-brushes" class="tool" style="--c:#8b5cf6;--cs:#ede8fe;--cd:#6d28d9" title="Plus de pinceaux : peindre, brosse, gonfler, pincer, pousser, sillon, combler (8)"><svg class="ic"><use href="#i-brushes"/></svg><b>Pinceaux</b></button>
+        <button class="tool"        data-tool="paint"   style="--c:#e11d48;--cs:#fde4ea;--cd:#9f1239" title="Peindre : colorer la surface avec la couleur choisie à droite (8) · Ctrl : terre cuite"><svg class="ic"><use href="#i-paint"/></svg><b>Peindre</b></button>
       </div>
       <div class="objects">
         <div class="obj-row">
@@ -335,7 +336,8 @@
       </div>
       <div class="row">
         <button id="dl-stl" class="big ok" disabled><svg class="ic"><use href="#i-import"/></svg>Télécharger (STL)</button>
-        <button id="dl-obj" class="big alt" disabled>OBJ</button>
+        <button id="dl-obj" class="big alt" disabled title="OBJ : garde les couleurs de la sculpture (couleurs par sommet)">OBJ couleur</button>
+        <button id="dl-ply" class="big alt" disabled title="PLY : couleurs par sommet, lu par Blender, MeshLab…">PLY couleur</button>
       </div>
       <p class="tiny">Demande à un adulte de lancer l'impression avec ce fichier.</p>
       <button class="big close" data-close>Fermer</button>
@@ -433,7 +435,7 @@
         <li style="--c:#eab308"><svg class="ic"><use href="#i-smooth"/></svg><span><b>Lisser</b> : passe l'éponge pour arrondir.</span></li>
         <li style="--c:#f97316"><svg class="ic"><use href="#i-stamp"/></svg><span><b>Tampon</b> : touche pour coller un motif ; reste appuyé et glisse pour choisir sa taille.</span></li>
         <li style="--c:#ec4899"><svg class="ic"><use href="#i-shapes"/></svg><span><b>Formes</b> : choisis une forme (ou un personnage, un animal…), touche l'endroit où la poser (elle reste là), change sa taille, puis appuie sur « Poser ». Avec <b>Nouveau › Surface vide</b>, tu commences de zéro et tu poses tout toi-même.</span></li>
-        <li style="--c:#8b5cf6"><svg class="ic"><use href="#i-brushes"/></svg><span><b>Pinceaux</b> : peindre, brosse, gonfler, pincer, pousser, sillon, combler (menu en bas de l'écran). <b>Couleurs</b> : choisis une couleur à droite (le + en ajoute une) ; ce que tu poses et ce que tu peins garde sa couleur.</span></li>
+        <li style="--c:#8b5cf6"><svg class="ic"><use href="#i-brushes"/></svg><span><b>Pinceaux</b> : touche Ajouter ou Enlever, le menu du bas propose brosse, gonfler, pincer, pousser, sillon, combler. <b>Peindre</b> colore la surface ; <b>couleurs</b> : choisis-en une à droite (le + en ajoute une), ce que tu poses et ce que tu peins garde sa couleur.</span></li>
         <li style="--c:#8b5cf6"><svg class="ic"><use href="#i-orbit"/></svg><span><b>Navigation</b> (en haut à gauche) : glisse sur la sphère ou touche X, Y, Z ; boutons de rotation ; zoom avec le curseur ou la molette. Clavier : flèches ou Q Z S D pour tourner, Maj + flèches pour déplacer, + / − pour zoomer, H pour la vue de départ.</span></li>
         <li style="--c:#64748b"><svg class="ic"><use href="#i-settings"/></svg><span><b>Raccourcis</b> : maintiens <b>Maj</b> pour lisser, <b>Ctrl</b> pour faire l'inverse (ajouter ↔ enlever), <b>Alt</b> + glisser pour déplacer la vue, <b>Espace</b> + glisser pour tourner. 1 à 7 : outils, 8 : pinceaux, F : formes, X : symétrie, [ ] : taille.</span></li>
         <li style="--c:#0ea5e9"><svg class="ic"><use href="#i-sym1"/></svg><span><b>Symétrie</b> : ce que tu fais d'un côté se répète de l'autre (ou en étoile).</span></li>
@@ -454,6 +456,11 @@
         <svg class="ic"><use href="#i-plate"/></svg>
         <span><b>Surface vide</b><small>Commence de zéro : choisis une forme et pose-la toi-même où tu veux</small></span>
       </button>
+      <button id="start-air" class="air-toggle" aria-pressed="false" title="La forme de départ flotte au-dessus du plateau : tu peux ajouter de la matière dessous">
+        <svg class="ic"><use href="#i-up"/></svg>
+        <span><b>En l'air</b><small>La forme choisie flotte au-dessus du plateau (pas posée dessus)</small></span>
+        <em class="air-state"></em>
+      </button>
       <div id="starter-list" class="starter-list"></div>
       <button class="big close" data-close>Non, je garde ma sculpture</button>
     </div>
@@ -463,10 +470,10 @@
 
   <noscript><div class="modal"><div class="card small"><h2>Oups</h2><p>Pâte3D a besoin de JavaScript pour fonctionner.</p></div></div></noscript>
 
-  <script src="js/sound.js?v=39"></script>
-  <script src="js/starters.js?v=39"></script>
-  <script src="js/clay.js?v=39"></script>
-  <script src="js/io.js?v=39"></script>
-  <script src="js/app.js?v=39"></script>
+  <script src="js/sound.js?v=40"></script>
+  <script src="js/starters.js?v=40"></script>
+  <script src="js/clay.js?v=40"></script>
+  <script src="js/io.js?v=40"></script>
+  <script src="js/app.js?v=40"></script>
 </body>
 </html>

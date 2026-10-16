@@ -279,16 +279,32 @@
     return new Blob([buf], { type: 'model/stl' });
   }
 
+  /** OBJ ; si la sculpture a plusieurs couleurs, chaque sommet porte sa couleur (« v x y z r g b », 0 à 1) : lue par Blender, MeshLab… */
   function writeOBJ(mesh, targetMm) {
     const { positions } = transformForPrint(mesh, targetMm);
-    const idx = mesh.indices;
-    const parts = ['# Clay3D - sculpture manifold (mm)\n'];
+    const idx = mesh.indices, col = mesh.hasColors ? mesh.colors : null;
+    const parts = ['# Clay3D - sculpture manifold (mm)' + (col ? ', couleurs par sommet' : '') + '\n'];
     for (let i = 0; i < positions.length; i += 3) {
-      parts.push('v ' + positions[i].toFixed(4) + ' ' + positions[i + 1].toFixed(4) + ' ' + positions[i + 2].toFixed(4) + '\n');
+      parts.push('v ' + positions[i].toFixed(4) + ' ' + positions[i + 1].toFixed(4) + ' ' + positions[i + 2].toFixed(4) +
+        (col ? ' ' + (col[i] / 255).toFixed(4) + ' ' + (col[i + 1] / 255).toFixed(4) + ' ' + (col[i + 2] / 255).toFixed(4) : '') + '\n');
     }
     for (let t = 0; t < idx.length; t += 3) {
       parts.push('f ' + (idx[t] + 1) + ' ' + (idx[t + 1] + 1) + ' ' + (idx[t + 2] + 1) + '\n');
     }
+    return new Blob(parts, { type: 'text/plain' });
+  }
+
+  /** PLY (texte) avec couleurs par sommet : lu partout (Blender, MeshLab, ZBrush, logiciels de découpe couleur…) */
+  function writePLY(mesh, targetMm) {
+    const { positions } = transformForPrint(mesh, targetMm);
+    const idx = mesh.indices, col = mesh.colors, V = positions.length / 3;
+    const parts = ['ply\nformat ascii 1.0\ncomment Clay3D - sculpture manifold (mm)\nelement vertex ' + V +
+      '\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face ' + (idx.length / 3) +
+      '\nproperty list uchar int vertex_indices\nend_header\n'];
+    for (let i = 0; i < positions.length; i += 3) {
+      parts.push(positions[i].toFixed(4) + ' ' + positions[i + 1].toFixed(4) + ' ' + positions[i + 2].toFixed(4) + ' ' + col[i] + ' ' + col[i + 1] + ' ' + col[i + 2] + '\n');
+    }
+    for (let t = 0; t < idx.length; t += 3) parts.push('3 ' + idx[t] + ' ' + idx[t + 1] + ' ' + idx[t + 2] + '\n');
     return new Blob(parts, { type: 'text/plain' });
   }
 
@@ -301,5 +317,5 @@
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
   }
 
-  global.ClayIO = { parseSTL, parseOBJ, normalize, SHAPES, shapeSoup, transformForPrint, writeSTL, writeOBJ, download };
+  global.ClayIO = { parseSTL, parseOBJ, normalize, SHAPES, shapeSoup, transformForPrint, writeSTL, writeOBJ, writePLY, download };
 })(window);

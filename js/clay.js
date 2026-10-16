@@ -628,7 +628,7 @@
     /* ---- remplissage / reset ---- */
     clear() { this.f.fill(0); this.col.fill(0); this._sh = null; this._shc = null; this.markAll(); }
     /** Nouvelle sculpture à partir d'une forme de départ (voir starters.js) : 'ball' par défaut, 'empty' = surface vide */
-    reset(kind) {
+    reset(kind, lift) {
       this.f.fill(0);
       this.col.fill(this.paint);               // la forme de départ est de la couleur choisie
       this._sh = null; this._shc = null;
@@ -636,7 +636,7 @@
       if (kind === 'empty') { this.markAll(); return; }
       this.beginEdit();
       const st = global.ClayStarters && global.ClayStarters.get(kind || 'ball');
-      this.build(st ? st.ops : [['s', 0, 15, 0, 16]]);
+      this.build(global.ClayStarters && lift ? global.ClayStarters.lifted(st ? st.ops : [['s', 0, 15, 0, 16]], lift) : (st ? st.ops : [['s', 0, 15, 0, 16]]));
       this.endEdit();
       this.markAll();
     }
@@ -1396,25 +1396,29 @@
       const cleaned = this._cleaned();
       const removed = cleaned.removed;
       let f = cleaned.f;
+      let colE = this.col;
       const baseN = N;
       let n = N;
       if (targetN && targetN !== N) {
         f = resampleTo(f, N, L, targetN, L);
+        colE = resampleColors(this.col, N, L, targetN, L, f);
         n = targetN;
         const hb = fieldBBox(f, n);
         if (hb) relaxField(f, n, 2, 0.5, hb);
       }
       configure(n, L);
       try {
-        return this._buildExportMesh(f, removed, n, fieldBBox(f, n), smoothIters || 0);
+        return this._buildExportMesh(f, removed, n, fieldBBox(f, n), smoothIters || 0, colE);
       } finally {
         configure(baseN, L);
       }
     }
 
-    _buildExportMesh(f, removed, n, bb, smoothIters) {
+    _buildExportMesh(f, removed, n, bb, smoothIters, colE) {
       const map = new Map();
       const verts = [];
+      const cols = [];
+      const prgb = this._palRGB;
       const idxs = [];
       const vid = (a, b) => {
         if (a > b) { const s = a; a = b; b = s; }
@@ -1424,6 +1428,8 @@
           edgeVertex(f, a, b, false);
           id = verts.length / 3;
           verts.push(vx, vy, vz);
+          const pc = colE[f[a] >= ISO ? a : b] * 3;            // couleur du voxel de matière au bout de l'arête
+          cols.push(Math.round(prgb[pc] * 255), Math.round(prgb[pc + 1] * 255), Math.round(prgb[pc + 2] * 255));
           map.set(key, id);
         }
         return id;
@@ -1436,6 +1442,9 @@
       }
       const positions = new Float32Array(verts);
       const indices = new Uint32Array(idxs);
+      const colors = new Uint8Array(cols);
+      let hasColors = false;
+      for (let i = 3; i < colors.length && !hasColors; i += 3) hasColors = colors[i] !== colors[0] || colors[i + 1] !== colors[1] || colors[i + 2] !== colors[2];
       if (smoothIters > 0) smoothMesh(positions, indices, smoothIters, 0.5, -0.53);
       const V = positions.length / 3;
       const nTri = indices.length / 3;
@@ -1472,7 +1481,7 @@
       }
       vol /= 6;
       return {
-        positions, indices, nTri, nVert: V, res: n,
+        positions, indices, colors, hasColors, nTri, nVert: V, res: n,
         manifold: bad === 0 && nTri > 0,
         problems: bad, removed,
         min: [minX, minY, minZ], max: [maxX, maxY, maxZ],
