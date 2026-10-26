@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=47">
+  <link rel="stylesheet" href="css/style.css?v=51">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
     /* secours si le premier CDN est injoignable */
@@ -57,6 +57,8 @@
       <symbol id="i-paint" viewBox="0 0 24 24"><path d="M4 4h12a1.5 1.5 0 0 1 1.5 1.5V9H4z"/><path d="M17.5 6.5H20v5.5H11.5V15"/><rect x="9.5" y="15" width="4" height="6.5" rx="1.2"/></symbol>
       <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3.5h11.5L20.5 7.5V19a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V5A1.5 1.5 0 0 1 5 3.5z"/><path d="M7.5 3.5v5h8v-5M7.5 20.5v-7h9v7"/></symbol>
       <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 18.5V6a1.5 1.5 0 0 1 1.5-1.5h4.8l2 2.5h8.2A1.5 1.5 0 0 1 21 8.5V10"/><path d="M3 18.5l2.6-7.2a1.5 1.5 0 0 1 1.4-1h13.6a1 1 0 0 1 .95 1.3L19 18.5a1.5 1.5 0 0 1-1.4 1H4.5A1.5 1.5 0 0 1 3 18.5z"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+      <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8 10.5V8a4 4 0 0 1 7.4-2"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
       <symbol id="i-fill" viewBox="0 0 24 24"><path d="M5 10h14l-1.5 9.5h-11z"/><path d="M8.5 14.5h7"/><path d="M12 2.8c1.6 2 2.5 3 2.5 4.3a2.5 2.5 0 0 1-5 0c0-1.3.9-2.3 2.5-4.3z"/></symbol>
       <symbol id="i-brushes" viewBox="0 0 24 24"><circle cx="7" cy="7" r="3.2"/><circle cx="17" cy="7" r="3.2"/><circle cx="7" cy="17" r="3.2"/><circle cx="17" cy="17" r="3.2"/></symbol>
@@ -187,14 +189,30 @@
           <h3>Pièces importées <small>maillage d'origine</small></h3>
           <div id="parts-list" class="parts-list"></div>
         </section>
-        <section class="sec">
-          <h3>Toute la forme</h3>
-          <div class="grid2 grid3">
-            <button class="mini" data-scale-all="1,1.15,1" title="Plus haut"><svg class="ic"><use href="#i-up"/></svg>Haut</button>
-            <button class="mini" data-scale-all="1,0.87,1" title="Plus bas"><svg class="ic"><use href="#i-down"/></svg>Bas</button>
-            <button class="mini" data-scale-all="1.15,1,1.15" title="Plus large">&#8596; Large</button>
-            <button class="mini" data-scale-all="0.87,1,0.87" title="Plus fin">&#8594;&#8592; Fin</button>
-            <button id="btn-smooth-all" class="mini" title="Lisser toute la sculpture"><svg class="ic"><use href="#i-sparkle"/></svg>Lisser</button>
+        <section id="sec-resize" class="sec">
+          <h3>Taille de la sculpture</h3>
+          <div class="dims-row" title="Dimensions de toute la sculpture (pièces importées comprises) : L gauche-droite, H hauteur, P profondeur, en cm">
+            <label>L<input id="rs-l" type="number" min="0.1" step="0.1" inputmode="decimal" aria-label="Largeur en cm"></label>
+            <label>H<input id="rs-h" type="number" min="0.1" step="0.1" inputmode="decimal" aria-label="Hauteur en cm"></label>
+            <label>P<input id="rs-p" type="number" min="0.1" step="0.1" inputmode="decimal" aria-label="Profondeur en cm"></label>
+            <button id="rs-lock" class="lock-btn" aria-pressed="true" title="Proportions gardées : taper une dimension change tout dans les mêmes proportions (touche pour changer)" aria-label="Garder les proportions"><svg class="ic"><use href="#i-lock"/></svg></button>
+          </div>
+          <div class="row rs-row">
+            <button id="rs-minus" class="mini" title="Un peu plus petit" aria-label="Plus petit">&#8722;</button>
+            <input id="rs-slider" type="range" min="20" max="300" step="1" value="100" aria-label="Taille en pourcentage">
+            <button id="rs-plus" class="mini" title="Un peu plus grand" aria-label="Plus grand">+</button>
+            <output id="rs-val">100 %</output>
+          </div>
+          <div id="rs-actions" class="grid2" hidden>
+            <button id="rs-cancel" class="mini" title="Revenir à la taille d'avant"><svg class="ic"><use href="#i-close"/></svg>Annuler</button>
+            <button id="rs-apply" class="mini ok" title="Appliquer cette taille"><svg class="ic"><use href="#i-check"/></svg>Appliquer</button>
+          </div>
+          <div class="grid5">
+            <button class="mini" data-scale-all="1,1.15,1" title="Plus haut" aria-label="Plus haut"><svg class="ic"><use href="#i-up"/></svg></button>
+            <button class="mini" data-scale-all="1,0.87,1" title="Plus bas" aria-label="Plus bas"><svg class="ic"><use href="#i-down"/></svg></button>
+            <button class="mini" data-scale-all="1.15,1,1.15" title="Plus large" aria-label="Plus large">&#8596;</button>
+            <button class="mini" data-scale-all="0.87,1,0.87" title="Plus fin" aria-label="Plus fin">&#8594;&#8592;</button>
+            <button id="btn-smooth-all" class="mini" title="Lisser toute la sculpture" aria-label="Lisser toute la sculpture"><svg class="ic"><use href="#i-sparkle"/></svg></button>
           </div>
         </section>
       </div>
@@ -205,7 +223,7 @@
       <div class="place-header">
         <div class="place-info">
           <span id="place-name" class="place-name">Forme</span>
-          <span id="place-dims" class="place-dims"></span>
+          <span id="place-dims" class="place-dims" title="Dimensions de la forme (cm)"></span>
         </div>
         <div class="seg mode-seg">
           <button id="pl-mode-move" class="seg-btn active" title="Toucher ou glisser pour déplacer la forme">Déplacer</button>
@@ -492,10 +510,10 @@
 
   <noscript><div class="modal"><div class="card small"><h2>Oups</h2><p>Pâte3D a besoin de JavaScript pour fonctionner.</p></div></div></noscript>
 
-  <script src="js/sound.js?v=47"></script>
-  <script src="js/starters.js?v=47"></script>
-  <script src="js/clay.js?v=47"></script>
-  <script src="js/io.js?v=47"></script>
-  <script src="js/app.js?v=47"></script>
+  <script src="js/sound.js?v=51"></script>
+  <script src="js/starters.js?v=51"></script>
+  <script src="js/clay.js?v=51"></script>
+  <script src="js/io.js?v=51"></script>
+  <script src="js/app.js?v=51"></script>
 </body>
 </html>

@@ -18,6 +18,7 @@
   /* état partagé (déclaré tôt) */
   let tool = 'add', stroke = null, placement = null;
   const parts = [];                            // pièces importées : maillages originaux, jamais transformés en argile
+  const rs = { on: false, base: null, sx: 1, sy: 1, sz: 1, lock: true, guide: null, warned: false };   // redimensionnement de la sculpture en cours
   let WL = 100, WH = 50;                       // plateau (mm) et sa moitié, lus dans le moteur
   const syncWorld = () => { const g = ClayEngine.grid(); WL = g.L; WH = g.HALF; };
   const gridSizeFor = (lw, res) => clamp(Math.round(lw / (100 / (res - 1))) + 1, 40, 160);
@@ -633,6 +634,7 @@
   }
   function pushUndo(entry) {
     if (!entry) return;
+    refreshDims();
     undoStack.push(entry);
     if (undoStack.length > 25) undoStack.shift();
     redoStack.length = 0;
@@ -640,6 +642,7 @@
     scheduleSave();
   }
   function undo() {
+    cancelResize();
     endStroke();
     clearPreview();
     const e = undoStack.pop();
@@ -650,6 +653,7 @@
     refreshUndo(); scheduleSave(); invalidate();
   }
   function redo() {
+    cancelResize();
     endStroke();
     clearPreview();
     const e = redoStack.pop();
@@ -960,6 +964,7 @@
   }
 
   function beginStroke(h, rt, e) {
+    commitResize();
     clay.beginEdit();
     const t = rt.tool;
     stroke = { tool: t, inv: rt.inv, born: performance.now(), onFloor: !!h.floor, last: null, path: 0, t0: h.t, prevHit: h, span: Math.max(0.8 * WL, 8 * Math.max(brushR(t), 2)), lastPx: e ? [e.clientX, e.clientY] : null, lastT: e ? e.timeStamp : 0 };
@@ -1334,7 +1339,16 @@
     invalidate();
   }
   const wheelFactor = (e) => Math.exp(e.deltaY * (e.deltaMode === 1 ? 0.04 : 1) * (e.ctrlKey ? 0.01 : 0.0012));
-  canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomBy(wheelFactor(e), e); }, { passive: false });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (placement && e.shiftKey) {                    // Maj + molette : taille de la forme (pied toujours au sol, même position)
+      const d = e.deltaY || e.deltaX;
+      placement.size = clamp(placement.size * Math.exp(-d * (e.deltaMode === 1 ? 0.04 : 0.0012)), 5, placement.maxSize);
+      updateGhost();
+      return;
+    }
+    zoomBy(wheelFactor(e), e);
+  }, { passive: false });
 
   function hover(e) {
     lastHover = e;
@@ -1503,9 +1517,18 @@
     $('#pl-mode-view').classList.toggle('active', m === 'view');
     setHint(m === 'view' ? 'Glisse pour regarder sous tous les angles sans déplacer la forme.'
       : m === 'height' ? 'Glisse vers le haut ou le bas pour monter ou descendre la forme. Le trait bleu montre sa hauteur au-dessus du plateau.'
-        : 'Glisse la forme pour la déplacer sur le plateau, ou touche l’endroit de la sculpture où la poser. Maj + glisser : monter / descendre.');
+        : 'Glisse la forme pour la déplacer sur le plateau, ou touche l’endroit de la sculpture où la poser. Maj + glisser : monter / descendre ; Maj + molette : taille.');
   }
   $('#pl-mode-move').addEventListener('click', () => setPlacementMode('move'));
+  /* dimensions de la forme (cm) : on peut les taper ; elles gardent les proportions et la position sur le plateau (pied au sol) */
+  const pdBox = $('#place-dims');
+  pdBox.innerHTML = ['L', 'H', 'P'].map((l, i) => '<label>' + l + '<input type="number" step="0.1" min="0.1" inputmode="decimal" data-pd="' + i + '" aria-label="Dimension ' + l + ' en cm"></label>').join('') + '<span>cm</span>';
+  pdBox.querySelectorAll('input').forEach((inp) => inp.addEventListener('change', () => {
+    if (!placement) return;
+    const v = parseFloat(String(inp.value).replace(',', '.')), i = +inp.dataset.pd;
+    if (v > 0 && placement.ext[i] > 1e-6) placement.size = clamp((v * 10) / placement.ext[i], 5, placement.maxSize);
+    updateGhost();
+  }));
   $('#pl-mode-height').addEventListener('click', () => setPlacementMode('height'));
   $('#pl-mode-view').addEventListener('click', () => setPlacementMode('view'));
 
@@ -1554,6 +1577,7 @@
   function startPlacement(soup, name, native, opt) {
     cancelPlacement();
     endStroke();
+    commitResize();
     opt = opt || {};
     const norm = IO.normalize(soup);
     const origMax = Math.max(norm.origExt[0], norm.origExt[1], norm.origExt[2]);
@@ -1683,7 +1707,7 @@
     syncMirrorGhosts();
     updateGuide();
 
-    $('#place-dims').textContent = `L ${(p.ext[0] * p.size / 10).toFixed(1)} × H ${(p.ext[1] * p.size / 10).toFixed(1)} × P ${(p.ext[2] * p.size / 10).toFixed(1)} cm`;
+    pdBox.querySelectorAll('input').forEach((inp) => { if (document.activeElement !== inp) inp.value = (p.ext[+inp.dataset.pd] * p.size / 10).toFixed(1); });
     $('#place-size-label').textContent = (p.size / 10).toFixed(1) + ' cm';
     $('#pl-size').value = Math.round(p.size);
     const deg = (r) => { let d = Math.round((r * 180 / Math.PI) % 360); if (d < 0) d += 360; return d; };
@@ -1983,6 +2007,7 @@
     closeModals();
     cancelPlacement();
     undoStack.length = 0; redoStack.length = 0;
+    cancelResize();
     clearParts();
     clay.reset(id, startAir ? 22 : 0);              // « en l'air » : la forme flotte 22 mm au-dessus du plateau (on peut ajouter dessous)
     refreshUndo();                                 // met aussi à jour l'état « surface vide »
@@ -2000,6 +2025,7 @@
 
   $('#btn-smooth-all').addEventListener('click', () => {
     endStroke();
+    commitResize();
     clay.beginEdit();
     const ok = clay.smoothAll(0.6);
     const entry = clay.endEdit();
@@ -2009,19 +2035,143 @@
     invalidate();
   });
 
-  /* étirer toute la forme */
-  $$('[data-scale-all]').forEach((b) => b.addEventListener('click', () => {
+  /* ---------------------------------------------------------------- Taille de la sculpture (argile + pièces importées)
+     La sculpture grandit ou rétrécit autour du milieu de son emprise sur le plateau, pied posé au sol : elle reste là où elle est.
+     Pendant le réglage, on voit un aperçu instantané (simple mise à l'échelle de l'affichage) ; « Appliquer » fait le vrai calcul en une
+     seule fois (donc un seul rééchantillonnage), avec annulation. Les pièces importées sont mises à l'échelle exactement (sans lissage). */
+  function partBounds(p) {
+    if (p.bb) return p.bb;
+    const s = p.soup, mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < s.length; i += 3) for (let k = 0; k < 3; k++) { const v = s[i + k]; if (v < mn[k]) mn[k] = v; if (v > mx[k]) mx[k] = v; }
+    return (p.bb = { min: mn, max: mx });
+  }
+  function contentBounds() {
+    const b = clay.bounds();
+    const min = b ? b.min.slice() : [Infinity, Infinity, Infinity], max = b ? b.max.slice() : [-Infinity, -Infinity, -Infinity];
+    for (const p of parts) { const pb = partBounds(p); for (let k = 0; k < 3; k++) { if (pb.min[k] < min[k]) min[k] = pb.min[k]; if (pb.max[k] > max[k]) max[k] = pb.max[k]; } }
+    return min[0] <= max[0] ? { min, max } : null;
+  }
+  /** facteurs maximaux par axe pour que la sculpture reste dans le plateau */
+  function rsLimits(b) {
+    const ax = (b.min[0] + b.max[0]) / 2, az = (b.min[2] + b.max[2]) / 2;
+    const lim = (a, lo, hi) => {
+      let m = Infinity;
+      if (hi - a > 0.01) m = Math.min(m, (WH - 2 - a) / (hi - a));
+      if (a - lo > 0.01) m = Math.min(m, (WH - 2 + a) / (a - lo));
+      return m;
+    };
+    return { x: lim(ax, b.min[0], b.max[0]), z: lim(az, b.min[2], b.max[2]), y: b.max[1] > 0.01 ? (WL - 3) / b.max[1] : Infinity };
+  }
+  function rsBegin() {
+    if (rs.on) return true;
+    const b = contentBounds();
+    if (!b) { toast('Il n’y a rien à redimensionner !'); return false; }
+    rs.base = { min: b.min, max: b.max, ax: (b.min[0] + b.max[0]) / 2, az: (b.min[2] + b.max[2]) / 2 };
+    rs.on = true; rs.sx = rs.sy = rs.sz = 1; rs.warned = false;
+    if (!rs.guide) { rs.guide = makeGuide(); rs.guide.userData.line.visible = false; }
+    scene.add(rs.guide);
+    const L = rsLimits(rs.base);
+    $('#rs-slider').max = String(Math.max(100, Math.min(300, Math.floor(100 * Math.min(L.x, L.y, L.z)))));
+    return true;
+  }
+  function rsTransforms(on) {
+    const b = rs.base, sx = on ? rs.sx : 1, sy = on ? rs.sy : 1, sz = on ? rs.sz : 1;
+    const px = on ? b.ax * (1 - sx) : 0, pz = on ? b.az * (1 - sz) : 0;
+    clay.group.scale.set(sx, sy, sz); clay.group.position.set(px, 0, pz);
+    for (const p of parts) { p.mesh.scale.set(sx, sy, sz); p.mesh.position.set(px, 0, pz); }
+  }
+  function rsUpdate() {
+    const L = rsLimits(rs.base), b = rs.base;
+    const cl = (v, m) => { if (v > m) { if (!rs.warned) { rs.warned = true; toast('Limite du plateau : la sculpture ne peut pas être plus grande ici'); } return m; } return Math.max(v, 0.1); };
+    rs.sx = cl(rs.sx, L.x); rs.sy = cl(rs.sy, L.y); rs.sz = cl(rs.sz, L.z);
+    rsTransforms(true);
+    const r = Math.max(2.5, 0.5 * Math.max((b.max[0] - b.min[0]) * rs.sx, (b.max[2] - b.min[2]) * rs.sz) + 1);
+    rs.guide.position.set(b.ax, 0.5, b.az);
+    rs.guide.userData.ring.scale.set(r, r, 1); rs.guide.userData.fill.scale.set(r, r, 1);
+    const d = Math.max(0.9, r * 0.07); rs.guide.userData.dot.scale.set(d, d, 1);
+    $('#rs-actions').hidden = false;
+    $('#rs-slider').value = String(Math.round(100 * Math.min(rs.sx, rs.sy, rs.sz)));
+    refreshDims();
+    invalidate();
+  }
+  function rsEnd() {
+    if (!rs.on) return;
+    rsTransforms(false);
+    scene.remove(rs.guide);
+    rs.on = false;
+    $('#rs-actions').hidden = true;
+    $('#rs-slider').value = '100';
+    refreshDims();
+    invalidate();
+  }
+  function cancelResize() { rsEnd(); }
+  function commitResize() { if (rs.on) { if (Math.abs(rs.sx - 1) + Math.abs(rs.sy - 1) + Math.abs(rs.sz - 1) < 1e-3) rsEnd(); else rsApply(); } }
+  function rsApply() {
+    if (!rs.on) return;
+    const { sx, sy, sz } = rs, b = rs.base;
+    rsEnd();
     endStroke();
-    const [sx, sy, sz] = b.dataset.scaleAll.split(',').map(Number);
     clay.beginEdit();
-    const ok = clay.scaleAbout(sx, sy, sz);
+    const ok = clay.scaleAboutWorld(sx, sy, sz, b.ax, b.az);
     if (ok) clay.relaxBox(0.3);
     const entry = clay.endEdit();
-    if (!entry) { toast('Il n’y a rien à étirer !'); return; }
-    pushUndo(entry);
-    Sfx.place();
-    invalidate();
-  }));
+    const swaps = parts.slice().map((p) => {
+      const s = p.soup, o = new Float32Array(s.length);
+      for (let i = 0; i < s.length; i += 3) { o[i] = b.ax + (s[i] - b.ax) * sx; o[i + 1] = s[i + 1] * sy; o[i + 2] = b.az + (s[i + 2] - b.az) * sz; }
+      const np = makePart(p.name, o);
+      removePartRaw(p); addPartRaw(np);
+      return { from: p, to: np };
+    });
+    if (!entry && !swaps.length) return;
+    pushUndo({ partOp: 'group', clay: entry, swaps });
+    Sfx.place(); shadowDirty = true; invalidate(); refreshDims();
+  }
+  /** dimensions affichées (cm) : celles de la sculpture, ou celles de l'aperçu pendant le réglage */
+  function refreshDims() {
+    const b = rs.on ? rs.base : contentBounds();
+    const inp = [$('#rs-l'), $('#rs-h'), $('#rs-p')];
+    const off = !b;
+    for (const i of inp) i.disabled = off;
+    for (const id of ['#rs-slider', '#rs-minus', '#rs-plus']) $(id).disabled = off;
+    $$('[data-scale-all]').forEach((x) => { x.disabled = off; });
+    if (off) { for (const i of inp) i.value = ''; $('#rs-val').textContent = '—'; return; }
+    const f = rs.on ? [rs.sx, rs.sy, rs.sz] : [1, 1, 1];
+    const v = [(b.max[0] - b.min[0]) * f[0], (b.max[1] - b.min[1]) * f[1], (b.max[2] - b.min[2]) * f[2]];
+    inp.forEach((i, k) => { if (document.activeElement !== i) i.value = (v[k] / 10).toFixed(1); });
+    $('#rs-val').textContent = rs.on ? Math.round(100 * (f[0] + f[1] + f[2]) / 3) + ' %' : '100 %';
+  }
+  const rsBump = (fx, fy, fz) => { if (!rsBegin()) return; rs.sx *= fx; rs.sy *= fy; rs.sz *= fz; rsUpdate(); };
+  $('#rs-slider').addEventListener('input', (e) => {
+    if (!rsBegin()) { e.target.value = '100'; return; }
+    rs.sx = rs.sy = rs.sz = +e.target.value / 100;
+    rsUpdate();
+  });
+  $('#rs-minus').addEventListener('click', () => rsBump(0.9, 0.9, 0.9));
+  $('#rs-plus').addEventListener('click', () => rsBump(1.1, 1.1, 1.1));
+  $$('[data-scale-all]').forEach((b) => b.addEventListener('click', () => { const [x, y, z] = b.dataset.scaleAll.split(',').map(Number); rsBump(x, y, z); }));
+  [['#rs-l', 0, 'sx'], ['#rs-h', 1, 'sy'], ['#rs-p', 2, 'sz']].forEach(([id, k, key]) => {
+    $(id).addEventListener('change', () => {
+      const v = parseFloat(String($(id).value).replace(',', '.'));
+      if (!(v > 0)) { refreshDims(); return; }
+      const b0 = rs.on ? rs.base : contentBounds();
+      if (!b0 || !rsBegin()) return;
+      const base = rs.base.max[k] - rs.base.min[k];
+      if (base < 0.01) { refreshDims(); return; }
+      const f = (v * 10) / base;
+      if (rs.lock) { rs.sx = rs.sy = rs.sz = f; } else rs[key] = f;
+      rsUpdate();
+    });
+  });
+  $('#rs-lock').addEventListener('click', () => {
+    rs.lock = !rs.lock;
+    $('#rs-lock').setAttribute('aria-pressed', String(rs.lock));
+    $('#rs-lock').querySelector('use').setAttribute('href', rs.lock ? '#i-lock' : '#i-unlock');
+    $('#rs-lock').title = rs.lock ? 'Proportions gardées : taper une dimension change tout dans les mêmes proportions (touche pour changer)' : 'Proportions libres : taper une dimension ne change que celle-là (touche pour changer)';
+    toast(rs.lock ? 'Proportions gardées' : 'Proportions libres : une dimension à la fois');
+  });
+  $('#rs-apply').addEventListener('click', () => { if (Math.abs(rs.sx - 1) + Math.abs(rs.sy - 1) + Math.abs(rs.sz - 1) < 1e-3) rsEnd(); else rsApply(); });
+  $('#rs-cancel').addEventListener('click', cancelResize);
+  refreshDims();
 
   /* sons */
   const syncSoundIcon = () => $('#sound-use').setAttribute('href', Sfx.isOn() ? '#i-sound-on' : '#i-sound-off');
@@ -2042,6 +2192,7 @@
     resize();
   }
   function afterGridChange(msg) {
+    cancelResize();
     endStroke();
     undoStack.length = 0; redoStack.length = 0; refreshUndo();
     syncWorld();
@@ -2169,6 +2320,7 @@
   }
   $('#btn-print').addEventListener('click', () => {
     endStroke();
+    commitResize();
     exportMm = parts.length ? 0 : (exportMm === 0 ? 80 : exportMm);          // avec des pièces importées : taille réelle (1 : 1)
     $$('#print-sizes .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.mm === exportMm));
     openModal('#modal-print');
@@ -2184,7 +2336,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=47');
+        exportWorker = new Worker('js/exportWorker.js?v=51');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }
@@ -2285,11 +2437,15 @@
   function applyPartOp(e, undoing) {
     if (e.partOp === 'add') { if (undoing) removePartRaw(e.part); else addPartRaw(e.part); }
     else if (e.partOp === 'remove') { if (undoing) addPartRaw(e.part); else removePartRaw(e.part); }
-    else if (e.partOp === 'swap') {
+    else if (e.partOp === 'group') {                                       // redimensionnement : argile + pièces
+      if (undoing) { for (const w of e.swaps) { removePartRaw(w.to); addPartRaw(w.from); } if (e.clay) clay.undoEntry(e.clay); }
+      else { if (e.clay) clay.redoEntry(e.clay); for (const w of e.swaps) { removePartRaw(w.from); addPartRaw(w.to); } }
+    } else if (e.partOp === 'swap') {
       if (undoing) { removePartRaw(e.to); addPartRaw(e.from); } else { removePartRaw(e.from); addPartRaw(e.to); }
     }
   }
   function refreshParts() {
+    refreshDims();
     $('#sec-parts').hidden = parts.length === 0;
     const box = $('#parts-list');
     box.textContent = '';
@@ -2345,6 +2501,7 @@
   }
   function saveProject() {
     endStroke();
+    commitResize();
     const hadPreview = !!pvEntry;
     if (hadPreview) clearPreview();                              // jamais l'aperçu dans le fichier
     const data = {

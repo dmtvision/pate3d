@@ -194,3 +194,11 @@ s'ouvre avec toutes ses commandes (haut / bas / déplacement).
 - **Placement** : nouvelle forme au centre du plateau, posée au sol, quand la surface est vide ; un cercle et un trait vertical bleus au sol montrent la position et la hauteur ;
   on **saisit** la forme (elle suit le geste sans sauter ; sur le plateau elle glisse horizontalement, sur la sculpture elle suit la surface), on touche ailleurs pour l'y poser,
   mode *Hauteur* (ou Maj + glisser) pour la monter / descendre.
+
+## Redimensionnement (v51)
+- **Taille de la sculpture** (colonne de droite) : dimensions L × H × P de toute la scène (argile **et** pièces importées) modifiables au clavier (cadenas = proportions gardées ou libres),
+  curseur 20–300 %, − / +, et Haut / Bas / Large / Fin. La sculpture grandit ou rétrécit **autour du milieu de son emprise sur le plateau, pied au sol** : elle reste où elle est
+  (avant, l'étirement se faisait autour du centre du plateau et décalait une sculpture placée de côté). Un cercle bleu sous elle marque ce point fixe.
+  Pendant le réglage : aperçu instantané (mise à l'échelle de l'affichage) ; **Appliquer** (ou le premier geste suivant) calcule une seule fois, avec annulation ; les pièces importées sont
+  mises à l'échelle exactement. Limite : la sculpture doit rester dans le plateau (message sinon).
+- **Forme en cours de placement** : dimensions L / H / P modifiables (cm), Maj + molette pour la taille ; la forme reste posée au sol et à sa place quand sa taille change.

@@ -1024,7 +1024,7 @@
     }
 
     /** Étire / écrase toute la sculpture (facteurs sx, sy, sz) en gardant le pied posé au sol. */
-    scaleAbout(sx, sy, sz) {
+    scaleAbout(sx, sy, sz, ax, az) {
       const f = this.f;
       let x0 = N, y0 = N, z0 = N, x1 = -1, y1 = -1, z1 = -1;
       for (let k = 0; k < N; k++)
@@ -1039,7 +1039,7 @@
           }
         }
       if (x1 < 0) return false;
-      const cx = (N - 1) / 2, cz = (N - 1) / 2, cy = FK - 0.5;
+      const cx = ax === undefined ? (N - 1) / 2 : ax, cz = az === undefined ? (N - 1) / 2 : az, cy = FK - 0.5;   // ancre (grille) : par défaut le milieu du plateau
       const lo = (a, c, s) => Math.min(a, c + (a - c) * s);
       const hi = (a, c, s) => Math.max(a, c + (a - c) * s);
       const bx0 = Math.max(1, Math.floor(Math.min(lo(x0, cx, sx), x0) - 3)), bx1 = Math.min(N - 2, Math.ceil(Math.max(hi(x1, cx, sx), x1) + 3));
@@ -1061,6 +1061,30 @@
         }
       this._grow(bx0, by0, bz0, bx1, by1, bz1);
       return true;
+    }
+
+    /** Pareil, avec l'ancre en coordonnées monde (mm) : la sculpture grandit ou rétrécit autour de ce point du plateau, pied posé au sol */
+    scaleAboutWorld(sx, sy, sz, wx, wz) { return this.scaleAbout(sx, sy, sz, (wx + HALF) / H, (wz + HALF) / H); }
+    /** Boîte englobante de la matière en mm : {min:[x,y,z], max:[x,y,z]} ou null si la sculpture est vide */
+    bounds() {
+      const f = this.f;
+      let x0 = N, y0 = N, z0 = N, x1 = -1, y1 = -1, z1 = -1;
+      for (let k = 0; k < N; k++)
+        for (let j = 0; j < N; j++) {
+          const o = j * N + k * N2;
+          for (let i = 0; i < N; i++) {
+            if (f[o + i] >= ISO) {
+              if (i < x0) x0 = i; if (i > x1) x1 = i;
+              if (j < y0) y0 = j; if (j > y1) y1 = j;
+              if (k < z0) z0 = k; if (k > z1) z1 = k;
+            }
+          }
+        }
+      if (x1 < 0) return null;
+      return {
+        min: [(x0 - 0.5) * H - HALF, Math.max(0, (y0 - 0.5) * H - FLOOR_Y), (z0 - 0.5) * H - HALF],
+        max: [(x1 + 0.5) * H - HALF, (y1 + 0.5) * H - FLOOR_Y, (z1 + 0.5) * H - HALF]
+      };
     }
 
     /* ---- primitives à distance signée (formes de départ) ---- */
