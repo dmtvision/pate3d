@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=46">
+  <link rel="stylesheet" href="css/style.css?v=47">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
     /* secours si le premier CDN est injoignable */
@@ -55,6 +55,8 @@
       <symbol id="i-nudge" viewBox="0 0 24 24"><path d="M3.5 6v12"/><path d="M7.5 12h13M16 7.5l4.5 4.5-4.5 4.5"/></symbol>
       <symbol id="i-groove" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2.5"/><path d="M6.5 12c1.8 2.4 3.5 2.4 5.5 0s3.7-2.4 5.5 0"/></symbol>
       <symbol id="i-paint" viewBox="0 0 24 24"><path d="M4 4h12a1.5 1.5 0 0 1 1.5 1.5V9H4z"/><path d="M17.5 6.5H20v5.5H11.5V15"/><rect x="9.5" y="15" width="4" height="6.5" rx="1.2"/></symbol>
+      <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3.5h11.5L20.5 7.5V19a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V5A1.5 1.5 0 0 1 5 3.5z"/><path d="M7.5 3.5v5h8v-5M7.5 20.5v-7h9v7"/></symbol>
+      <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 18.5V6a1.5 1.5 0 0 1 1.5-1.5h4.8l2 2.5h8.2A1.5 1.5 0 0 1 21 8.5V10"/><path d="M3 18.5l2.6-7.2a1.5 1.5 0 0 1 1.4-1h13.6a1 1 0 0 1 .95 1.3L19 18.5a1.5 1.5 0 0 1-1.4 1H4.5A1.5 1.5 0 0 1 3 18.5z"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
       <symbol id="i-fill" viewBox="0 0 24 24"><path d="M5 10h14l-1.5 9.5h-11z"/><path d="M8.5 14.5h7"/><path d="M12 2.8c1.6 2 2.5 3 2.5 4.3a2.5 2.5 0 0 1-5 0c0-1.3.9-2.3 2.5-4.3z"/></symbol>
       <symbol id="i-brushes" viewBox="0 0 24 24"><circle cx="7" cy="7" r="3.2"/><circle cx="17" cy="7" r="3.2"/><circle cx="7" cy="17" r="3.2"/><circle cx="17" cy="17" r="3.2"/></symbol>
@@ -82,7 +84,8 @@
       <button id="btn-redo" class="pill round c-amber" disabled title="Refaire (Ctrl+Y)" aria-label="Refaire"><svg class="ic"><use href="#i-redo"/></svg></button>
       <i class="top-sep" aria-hidden="true"></i>
       <button id="btn-new" class="pill c-orange" title="Nouvelle sculpture" aria-label="Nouvelle sculpture"><svg class="ic"><use href="#i-new"/></svg><span>Nouveau</span></button>
-      <button id="btn-import-top" class="pill blue" title="Importer un fichier 3D (STL ou OBJ)" aria-label="Importer un fichier 3D"><svg class="ic"><use href="#i-import"/></svg><span>Importer</span></button>
+      <button id="btn-import-top" class="pill blue lbl" title="Ouvrir un projet Pâte3D (.pate3d) ou importer un fichier 3D (STL, OBJ)" aria-label="Ouvrir un projet ou un fichier 3D"><svg class="ic"><use href="#i-open"/></svg><span>Ouvrir</span></button>
+      <button id="btn-save" class="pill blue lbl" title="Enregistrer le projet (.pate3d) pour le reprendre plus tard (Ctrl+S)" aria-label="Enregistrer le projet"><svg class="ic"><use href="#i-save"/></svg><span>Enregistrer</span></button>
     </div>
     <div class="top-right">
       <button id="btn-help" class="pill round c-violet" title="Comment ça marche ?" aria-label="Aide"><svg class="ic"><use href="#i-help"/></svg></button>
@@ -180,6 +183,10 @@
           <h3>Couleur <small>pour poser et peindre</small></h3>
           <div id="colors" class="colors"></div>
         </section>
+        <section id="sec-parts" class="sec" hidden>
+          <h3>Pièces importées <small>maillage d'origine</small></h3>
+          <div id="parts-list" class="parts-list"></div>
+        </section>
         <section class="sec">
           <h3>Toute la forme</h3>
           <div class="grid2 grid3">
@@ -202,6 +209,7 @@
         </div>
         <div class="seg mode-seg">
           <button id="pl-mode-move" class="seg-btn active" title="Toucher ou glisser pour déplacer la forme">Déplacer</button>
+          <button id="pl-mode-height" class="seg-btn" title="Glisser vers le haut ou le bas pour monter ou descendre la forme (ou Maj + glisser)">Hauteur</button>
           <button id="pl-mode-view" class="seg-btn" title="Glisser pour regarder sous tous les angles sans bouger la forme">Tourner la vue</button>
         </div>
         <button id="pl-more" class="chip more-chip" title="Rotation 3 axes, déplacements fins…">Plus d'options</button>
@@ -292,6 +300,7 @@
           <div class="seg">
             <button id="pl-add" class="seg-btn active" title="Fusionner la forme avec l'argile">Coller</button>
             <button id="pl-carve" class="seg-btn" title="Creuser l'argile avec la forme">Creuser</button>
+            <button id="pl-keep" class="seg-btn" hidden title="Garder le maillage de ton fichier tel quel : rien n'est lissé ni transformé, il est exporté exactement comme il est">Garder tel quel</button>
           </div>
           <div class="row actions-final">
             <button id="pl-cancel" class="big cancel" title="Annuler sans poser"><svg class="ic"><use href="#i-close"/></svg>Annuler</button>
@@ -305,7 +314,7 @@
     <div id="drop" class="drop" hidden>Dépose ton fichier 3D ici (STL ou OBJ)</div>
   </main>
 
-  <input id="file" type="file" accept=".stl,.obj,.STL,.OBJ" hidden>
+  <input id="file" type="file" accept=".pate3d,.json,.stl,.obj,.PATE3D,.STL,.OBJ" hidden>
 
   <!-- Fenêtre Formes / Import -->
   <div id="modal-shapes" class="modal" hidden>
@@ -339,6 +348,7 @@
         <button class="seg-btn" data-mm="50">Petit<br><small>5 cm</small></button>
         <button class="seg-btn active" data-mm="80">Moyen<br><small>8 cm</small></button>
         <button class="seg-btn" data-mm="120">Grand<br><small>12 cm</small></button>
+        <button class="seg-btn" data-mm="0" title="Taille réelle : 1 unité de la scène = 1 mm (pièces importées inchangées)">Réelle<br><small>1 : 1</small></button>
       </div>
       <div class="row">
         <button id="dl-stl" class="big ok" disabled><svg class="ic"><use href="#i-import"/></svg>Télécharger (STL)</button>
@@ -450,6 +460,7 @@
         <li style="--c:#8b5cf6"><svg class="ic"><use href="#i-orbit"/></svg><span><b>Navigation</b> (en haut à gauche) : glisse sur la sphère ou touche X, Y, Z ; boutons de rotation ; zoom avec le curseur ou la molette. Clavier : flèches ou Q Z S D pour tourner, Maj + flèches pour déplacer, + / − pour zoomer, H pour la vue de départ.</span></li>
         <li style="--c:#64748b"><svg class="ic"><use href="#i-settings"/></svg><span><b>Raccourcis</b> : maintiens <b>Maj</b> pour lisser, <b>Ctrl</b> pour faire l'inverse (ajouter ↔ enlever), <b>Alt</b> + glisser pour déplacer la vue, <b>Espace</b> + glisser pour tourner. 1 à 7 : outils, 8 : pinceaux, F : formes, X : symétrie, [ ] : taille.</span></li>
         <li style="--c:#0ea5e9"><svg class="ic"><use href="#i-sym1"/></svg><span><b>Symétrie</b> : ce que tu fais d'un côté se répète de l'autre (ou en étoile).</span></li>
+        <li style="--c:#0284c7"><svg class="ic"><use href="#i-save"/></svg><span><b>Enregistrer</b> crée un fichier projet <b>.pate3d</b> (sculpture, couleurs, pièces importées) ; <b>Ouvrir</b> le rouvre tel quel pour continuer à le modifier (Ctrl+S). <b>Importer</b> un STL ou un OBJ : il est gardé <b>tel quel</b> (aucun lissage), ou fondu dans l'argile avec « Coller ».</span></li>
         <li style="--c:#16a34a"><svg class="ic"><use href="#i-print"/></svg><span><b>Imprimer 3D</b> : prépare un fichier solide pour l'imprimante.</span></li>
       </ul>
       <p class="tiny">Règle la taille et la force du pinceau à droite. Chaque outil garde ses réglages. Stylet : le bouton du stylet fait tourner la vue, la gomme efface.</p>
@@ -481,10 +492,10 @@
 
   <noscript><div class="modal"><div class="card small"><h2>Oups</h2><p>Pâte3D a besoin de JavaScript pour fonctionner.</p></div></div></noscript>
 
-  <script src="js/sound.js?v=46"></script>
-  <script src="js/starters.js?v=46"></script>
-  <script src="js/clay.js?v=46"></script>
-  <script src="js/io.js?v=46"></script>
-  <script src="js/app.js?v=46"></script>
+  <script src="js/sound.js?v=47"></script>
+  <script src="js/starters.js?v=47"></script>
+  <script src="js/clay.js?v=47"></script>
+  <script src="js/io.js?v=47"></script>
+  <script src="js/app.js?v=47"></script>
 </body>
 </html>

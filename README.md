@@ -182,3 +182,15 @@ Forces par défaut plus douces (0,2 à 0,35 ; une remise à zéro unique des for
 (le trait ne dérive plus vers la caméra) et avance de R·(0,012 + 0,1·force) par pas. « Nouveau » : option **En l'air** (la forme flotte 22 mm au-dessus du plateau,
 `Clay.reset(id, lift)`), Boule en l'air, chat / chien / cheval / ours debout sur quatre pattes, oiseau en vol. Au placement depuis une surface vide, le panneau
 s'ouvre avec toutes ses commandes (haut / bas / déplacement).
+
+## Projet, pièces importées, placement (v47)
+- **Projet `.pate3d`** (Enregistrer / Ouvrir, Ctrl+S) : JSON `{format:'pate3d-project', version:1, sculpture: <sérialisation du champ + couleurs + palette>, parts:[{name, soup: float32 en base64}]}`.
+  Rouvrir reprend le plateau du projet et rééchantillonne à la résolution des options ; vérifié : champ, couleurs, palette et pièces identiques après un aller-retour.
+- **Pièces importées = maillage d'origine** : un STL / OBJ importé est par défaut « gardé tel quel » (bouton *Garder tel quel* du panneau de placement ; *Coller* / *Creuser* le fondent dans
+  l'argile comme avant). Les triangles ne sont ni voxélisés ni lissés : seuls position, rotation et taille choisies s'appliquent (taille d'origine par défaut). Elles apparaissent en gris-bleu,
+  se déplacent (*Déplacer*) ou se suppriment dans la colonne de droite, sont annulables, enregistrées dans le projet et en IndexedDB (rechargement automatique), et sont ajoutées **telles quelles**
+  à l'export (sommets soudés bit à bit, `IO.weldSoup`) : STL/OBJ/PLY à **taille réelle 1 : 1** (bouton *Réelle*, choisi d'office quand il y a des pièces). Vérifié : écart maximal 1,7·10⁻⁶ mm
+  par rapport au STL d'origine, mêmes triangles. Les pièces ne se sculptent pas ; leur maillage n'est pas vérifié manifold. Nos OBJ (`# Clay3D…`) sont relus debout (Z haut).
+- **Placement** : nouvelle forme au centre du plateau, posée au sol, quand la surface est vide ; un cercle et un trait vertical bleus au sol montrent la position et la hauteur ;
+  on **saisit** la forme (elle suit le geste sans sauter ; sur le plateau elle glisse horizontalement, sur la sculpture elle suit la surface), on touche ailleurs pour l'y poser,
+  mode *Hauteur* (ou Maj + glisser) pour la monter / descendre.

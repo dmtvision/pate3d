@@ -17,6 +17,7 @@
 
   /* état partagé (déclaré tôt) */
   let tool = 'add', stroke = null, placement = null;
+  const parts = [];                            // pièces importées : maillages originaux, jamais transformés en argile
   let WL = 100, WH = 50;                       // plateau (mm) et sa moitié, lus dans le moteur
   const syncWorld = () => { const g = ClayEngine.grid(); WL = g.L; WH = g.HALF; };
   const gridSizeFor = (lw, res) => clamp(Math.round(lw / (100 / (res - 1))) + 1, 40, 160);
@@ -146,6 +147,8 @@
   scene.add(clay.group);
   const clayMatcap = new THREE.MeshMatcapMaterial({ color: 0xe9936b, matcap: matcapTex });
   const clayReal = new THREE.MeshStandardMaterial({ color: 0xe9936b, roughness: 0.72, metalness: 0 });
+  const partMatcap = new THREE.MeshMatcapMaterial({ color: 0xb4c3d6, matcap: matcapTex });
+  const partReal = new THREE.MeshStandardMaterial({ color: 0xb4c3d6, roughness: 0.6, metalness: 0.05 });
 
   /* ---- ombre douce sous la sculpture (empreinte floutée de la base) ---- */
   const SH = 64;
@@ -642,7 +645,8 @@
     const e = undoStack.pop();
     schedulePreview();
     if (!e) return;
-    clay.undoEntry(e); redoStack.push(e); Sfx.undo();
+    if (e.partOp) applyPartOp(e, true); else clay.undoEntry(e);
+    redoStack.push(e); Sfx.undo();
     refreshUndo(); scheduleSave(); invalidate();
   }
   function redo() {
@@ -651,7 +655,8 @@
     const e = redoStack.pop();
     schedulePreview();
     if (!e) return;
-    clay.redoEntry(e); undoStack.push(e); Sfx.undo();
+    if (e.partOp) applyPartOp(e, false); else clay.redoEntry(e);
+    undoStack.push(e); Sfx.undo();
     refreshUndo(); scheduleSave(); invalidate();
   }
   $('#btn-undo').addEventListener('click', undo);
@@ -684,6 +689,7 @@
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if ((e.ctrlKey || e.metaKey) && key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
     if ((e.ctrlKey || e.metaKey) && key === 'y') { e.preventDefault(); redo(); return; }
+    if ((e.ctrlKey || e.metaKey) && key === 's') { e.preventDefault(); saveProject(); return; }
     if (e.code === 'Space' || key === ' ') { if (!modalOpen()) { e.preventDefault(); spaceDown = true; hideCursor(); } return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (key === 'Enter' && placement && !modalOpen() && !/BUTTON|INPUT/.test((e.target || {}).tagName || '')) { validatePlacement(); return; }
@@ -1207,9 +1213,9 @@
   let lastTap = { t: 0, x: 0, y: 0 };
   let mode = null; // stroke | orbit | pan | nav | ghost | none
   let navPrev = null;
-  let placementMode = 'move'; // 'move' | 'view'
-  let strokeQ = [], hoverEvt = null, ghostEvt = null, orbitD = null, panD = null, navDirty = false;
-  const pending = () => strokeQ.length > 0 || hoverEvt || ghostEvt || orbitD || panD || navDirty;
+  let placementMode = 'move'; // 'move' | 'height' | 'view'
+  let strokeQ = [], hoverEvt = null, ghostEvt = null, ghostDy = 0, orbitD = null, panD = null, navDirty = false;
+  const pending = () => strokeQ.length > 0 || hoverEvt || ghostEvt || ghostDy || orbitD || panD || navDirty;
 
   function processInput() {
     if (strokeQ.length) {
@@ -1223,7 +1229,8 @@
     }
     if (panD) { pan(panD.x, panD.y); panD = null; }
     if (navDirty) { navDirty = false; navMove(); }
-    if (ghostEvt) { const h = pickPlace(ghostEvt); ghostEvt = null; if (h) moveGhost(h); }
+    if (ghostEvt) { const ge = ghostEvt; ghostEvt = null; dragGhost(ge); }
+    if (ghostDy) { const dy = ghostDy; ghostDy = 0; moveHeight(dy); }
     if (hoverEvt) { const e = hoverEvt; hoverEvt = null; hover(e); }
   }
   function flushInput() { processInput(); }
@@ -1252,8 +1259,9 @@
     if (spaceDown) { mode = 'orbit'; return; }                                                                       // Espace + glisser : tourner la vue
     if (placement) {
       if (placementMode === 'view') { mode = 'orbit'; return; }
-      const h = pickPlace(e);
-      if (h) { moveGhost(h); mode = 'ghost'; } else mode = 'orbit';
+      if (placementMode === 'height' || e.shiftKey) { mode = 'gheight'; return; }      // monter / descendre la forme
+      mode = 'ghost';
+      if (!beginGhostDrag(e)) { const h = pickPlace(e); if (h) moveGhost(h); else mode = 'orbit'; }   // sur la forme : on la saisit ; ailleurs : elle vient là
       return;
     }
     if (tool !== 'orbit' || eraser) {
@@ -1292,6 +1300,7 @@
       case 'orbit': orbitD = orbitD || { x: 0, y: 0 }; orbitD.x += dx; orbitD.y += dy; break;
       case 'pan': panD = panD || { x: 0, y: 0 }; panD.x += dx; panD.y += dy; break;
       case 'ghost': ghostEvt = { clientX: e.clientX, clientY: e.clientY }; break;
+      case 'gheight': ghostDy += dy; break;
       case 'nav': navDirty = true; break;
       default: return;
     }
@@ -1332,7 +1341,7 @@
     if (placement) {
       // le survol ne déplace JAMAIS la forme (sinon un clic ne la « poserait » pas : elle suivrait la souris) :
       // elle se place en cliquant ou en la faisant glisser ; au survol, un petit repère montre où le clic la posera
-      const h = placementMode === 'move' ? pickPlace(e) : null;
+      const h = placementMode === 'move' && !e.shiftKey ? pickPlace(e) : null;
       if (h) showCursor([h.x, h.y, h.z], 1.6); else hideCursor();
       return;
     }
@@ -1490,10 +1499,14 @@
   function setPlacementMode(m) {
     placementMode = m;
     $('#pl-mode-move').classList.toggle('active', m === 'move');
+    $('#pl-mode-height').classList.toggle('active', m === 'height');
     $('#pl-mode-view').classList.toggle('active', m === 'view');
-    setHint(m === 'view' ? 'Glisse pour regarder sous tous les angles sans déplacer la forme.' : 'Touche l’endroit de la sculpture ou du plateau où poser la forme.');
+    setHint(m === 'view' ? 'Glisse pour regarder sous tous les angles sans déplacer la forme.'
+      : m === 'height' ? 'Glisse vers le haut ou le bas pour monter ou descendre la forme. Le trait bleu montre sa hauteur au-dessus du plateau.'
+        : 'Glisse la forme pour la déplacer sur le plateau, ou touche l’endroit de la sculpture où la poser. Maj + glisser : monter / descendre.');
   }
   $('#pl-mode-move').addEventListener('click', () => setPlacementMode('move'));
+  $('#pl-mode-height').addEventListener('click', () => setPlacementMode('height'));
   $('#pl-mode-view').addEventListener('click', () => setPlacementMode('view'));
 
   function setPlacing(on) {
@@ -1505,13 +1518,47 @@
     updateViewOffset(); invalidate();
   }
 
-  /** native = true : la forme garde sa vraie taille (formes de départ) ; sinon taille « agréable » selon que la surface est vide ou non */
-  function startPlacement(soup, name, native) {
+  /* repère au sol : cercle sous la forme + trait vertical jusqu'au plateau, pour lire sa position et sa hauteur */
+  const guideMat = new THREE.MeshBasicMaterial({ color: 0x0284c7, transparent: true, opacity: 0.9, depthTest: false, side: THREE.DoubleSide });
+  const guideFill = new THREE.MeshBasicMaterial({ color: 0x0284c7, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
+  const guideLineMat = new THREE.LineBasicMaterial({ color: 0x0284c7, transparent: true, opacity: 0.9, depthTest: false });
+  const Y_UP = new THREE.Vector3(0, 1, 0), pPoint = new THREE.Vector3();
+  function makeGuide() {
+    const g = new THREE.Group();
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.93, 1, 56), guideMat); ring.rotation.x = -Math.PI / 2; ring.renderOrder = 6;
+    const fill = new THREE.Mesh(new THREE.CircleGeometry(0.93, 40), guideFill); fill.rotation.x = -Math.PI / 2;
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(1, 20), guideMat); dot.rotation.x = -Math.PI / 2; dot.renderOrder = 6;
+    const lg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0)]);
+    const line = new THREE.Line(lg, guideLineMat); line.renderOrder = 6;
+    g.add(fill, ring, dot, line);
+    g.userData = { ring, fill, dot, line };
+    for (const o of [fill, ring, dot, line]) o.frustumCulled = false;
+    return g;
+  }
+  function updateGuide() {
+    const p = placement;
+    if (!p || !p.guide) return;
+    const ex = ghostExtent(), pos = p.mesh.position, u = p.guide.userData;
+    const r = Math.max(2.5, Math.max(ex.hx, ex.hz) + 0.8);
+    p.guide.position.set(pos.x, 0.5, pos.z);
+    u.ring.scale.set(r, r, 1); u.fill.scale.set(r, r, 1);
+    const d = Math.max(0.9, r * 0.07); u.dot.scale.set(d, d, 1);
+    const gap = pos.y - ex.hy - 0.5;                    // distance entre le dessous de la forme et le plateau
+    u.line.visible = gap > 0.6;
+    u.line.scale.set(1, Math.max(gap, 0.01), 1);
+    u.line.position.set(0, 0, 0);
+  }
+
+  /** native = true : la forme garde sa vraie taille (formes de départ, fichiers importés) ; sinon taille « agréable » selon que la surface est vide ou non.
+   *  opt : { imported (fichier de l'utilisateur : maillage gardé tel quel par défaut), replacing (pièce qu'on déplace), keepPos (reprendre sa place) } */
+  function startPlacement(soup, name, native, opt) {
     cancelPlacement();
     endStroke();
+    opt = opt || {};
     const norm = IO.normalize(soup);
-    const startSize = native ? Math.max(norm.origExt[0], norm.origExt[1], norm.origExt[2])
-      : clay.isEmpty() ? Math.min(40, 0.45 * WL) : Math.min(25, 0.4 * WL);
+    const origMax = Math.max(norm.origExt[0], norm.origExt[1], norm.origExt[2]);
+    const startSize = native ? origMax : clay.isEmpty() ? Math.min(40, 0.45 * WL) : Math.min(25, 0.4 * WL);
+    const maxSize = opt.imported ? Math.max(0.9 * WL, origMax) : 0.9 * WL;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(norm.pos, 3));
     geo.computeVertexNormals();
@@ -1523,39 +1570,104 @@
     xray.frustumCulled = false; xray.renderOrder = 3;
     mesh.add(xray);
     scene.add(mesh);
+    const guide = makeGuide();
+    scene.add(guide);
 
-    // la forme apparaît à l'endroit que l'on regarde (au milieu de la zone libre), pas cachée au centre du plateau
-    const rc = canvas.getBoundingClientRect();
-    let h = pick({ clientX: rc.left + freeC.x, clientY: rc.top + freeC.y }, clay.f);
-    if (!h) h = { x: 0, y: 0, z: 0, floor: true };
+    // position de départ : surface vide → au milieu du plateau, posée au sol (jamais décalée en profondeur) ;
+    // sinon à l'endroit que l'on regarde (milieu de la zone libre)
+    let h;
+    if (opt.keepPos) h = { x: (norm.min[0] + norm.max[0]) / 2, y: (norm.min[1] + norm.max[1]) / 2, z: (norm.min[2] + norm.max[2]) / 2, floor: false };
+    else if (clay.isEmpty()) h = { x: 0, y: 0, z: 0, floor: true };
+    else {
+      const rc = canvas.getBoundingClientRect();
+      h = pick({ clientX: rc.left + freeC.x, clientY: rc.top + freeC.y }, clay.f) || { x: 0, y: 0, z: 0, floor: true };
+    }
     placement = {
-      mesh, base: norm.pos, ext: norm.ext, name, geo, ghosts: [],
-      size: clamp(startSize, 5, 0.9 * WL), yaw: 0, pitch: 0, roll: 0, offY: 0, carve: false, mirror: false, mirrorAuto: true,
+      mesh, base: norm.pos, ext: norm.ext, name, geo, ghosts: [], guide,
+      size: clamp(startSize, 5, maxSize), maxSize, yaw: 0, pitch: 0, roll: 0, offY: 0, carve: false, keep: !!opt.imported, imported: !!opt.imported,
+      replacing: opt.replacing || null, done: false, drag: null, mirror: false, mirrorAuto: true,
       hit: { x: h.x, y: h.y, z: h.z, floor: h.floor }
     };
     $('#place-name').textContent = name;
-    $('#pl-add').classList.add('active');
-    $('#pl-carve').classList.remove('active');
+    $('#pl-keep').hidden = !placement.imported;
     const wide = clay.isEmpty();                  // surface vide : on place la forme à la main, donc haut / bas / déplacement sont déjà là
     $('#place').classList.toggle('expanded', wide);
     $('#pl-more').textContent = wide ? 'Moins d’options' : 'Plus d’options';
-    $('#pl-size').max = String(Math.round(0.9 * WL));
+    $('#pl-size').max = String(Math.round(maxSize));
     setPlacing(true);
     setPlacementMode('move');
-    updateGhost();
-    setHint('Forme prête ! Touche l’endroit où la poser, change sa taille, puis appuie sur « Poser ».');
+    setPlaceOp(placement.keep ? 'keep' : 'add');
+    setHint(placement.imported
+      ? 'Fichier prêt, à sa taille d’origine : glisse-le pour le placer, puis « Poser ». Son maillage reste exactement celui de ton fichier.'
+      : 'Forme prête ! Glisse-la ou touche l’endroit où la poser, change sa taille, puis appuie sur « Poser ».');
   }
 
-  function ghostHalfHeight() {
+  /** Ce que fait « Poser » : coller dans l'argile, creuser, ou (fichier importé) garder le maillage tel quel */
+  function setPlaceOp(op) {
+    const p = placement;
+    if (!p) return;
+    p.carve = op === 'carve'; p.keep = op === 'keep';
+    $('#pl-add').classList.toggle('active', op === 'add');
+    $('#pl-carve').classList.toggle('active', op === 'carve');
+    $('#pl-keep').classList.toggle('active', op === 'keep');
+    if (p.keep) { clearPreview(); p.mirror = false; }
+    updateGhost();
+  }
+
+  /** Demi-dimensions de la forme (tournée et mise à l'échelle) le long des axes de la scène */
+  function ghostExtent() {
     const p = placement;
     const m = new THREE.Matrix4().makeRotationFromEuler(p.mesh.rotation);
-    let maxY = 0;
+    let hx = 0, hy = 0, hz = 0;
     const v = new THREE.Vector3();
     for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
       v.set(sx * p.ext[0] / 2, sy * p.ext[1] / 2, sz * p.ext[2] / 2).applyMatrix4(m);
-      if (v.y > maxY) maxY = v.y;
+      if (Math.abs(v.x) > hx) hx = Math.abs(v.x);
+      if (v.y > hy) hy = v.y;
+      if (Math.abs(v.z) > hz) hz = Math.abs(v.z);
     }
-    return maxY * p.size;
+    return { hx: hx * p.size, hy: hy * p.size, hz: hz * p.size };
+  }
+  function ghostHalfHeight() { return ghostExtent().hy; }
+
+  /* saisir la forme : si le doigt / la souris est sur elle, elle suit le geste sans « sauter » (au sol : glisse sur le plateau ;
+     sur la sculpture : suit la surface) ; ailleurs, elle vient se poser à l'endroit touché */
+  function beginGhostDrag(e) {
+    const p = placement;
+    p.drag = null;
+    const ex = ghostExtent(), c = p.mesh.position;
+    const ray = rayFrom(e);
+    if (!ray.intersectsSphere(new THREE.Sphere(c, Math.hypot(ex.hx, ex.hy, ex.hz) * 0.85))) return false;
+    if (!p.hit.floor) {
+      const h0 = pickPlace(e);
+      if (h0 && !h0.floor) { p.drag = { kind: 'surf', h0, from: { x: p.hit.x, y: p.hit.y, z: p.hit.z } }; return true; }
+    }
+    planeTmp.setFromNormalAndCoplanarPoint(Y_UP, pPoint.set(0, c.y, 0));
+    if (!ray.intersectPlane(planeTmp, pPoint)) return false;
+    p.drag = { kind: 'plane', y: c.y, ox: p.hit.x - pPoint.x, oz: p.hit.z - pPoint.z };
+    return true;
+  }
+  function dragGhost(e) {
+    const p = placement;
+    if (!p) return;
+    const d = p.drag;
+    if (!d) { const h = pickPlace(e); if (h) moveGhost(h); return; }
+    if (d.kind === 'plane') {
+      planeTmp.setFromNormalAndCoplanarPoint(Y_UP, pPoint.set(0, d.y, 0));
+      if (!rayFrom(e).intersectPlane(planeTmp, pPoint)) return;
+      moveGhost({ x: clamp(pPoint.x + d.ox, -WH + 1, WH - 1), y: p.hit.y, z: clamp(pPoint.z + d.oz, -WH + 1, WH - 1), floor: p.hit.floor });
+    } else {
+      const h = pickPlace(e);
+      if (!h || h.floor) return;
+      moveGhost({ x: d.from.x + h.x - d.h0.x, y: d.from.y + h.y - d.h0.y, z: d.from.z + h.z - d.h0.z, floor: false });
+    }
+  }
+  function moveHeight(dy) {
+    const p = placement;
+    if (!p) return;
+    p.offY -= dy * worldPerPx(camera.position.distanceTo(p.mesh.position));
+    p.offY = p.hit.floor ? Math.max(0, p.offY) : Math.max(-p.hit.y, p.offY);
+    updateGhost();
   }
 
   function updateGhost() {
@@ -1569,13 +1681,14 @@
     const y = h.floor ? ghostHalfHeight() + p.offY : h.y + p.offY;
     p.mesh.position.set(x, Math.max(0, y), z);
     syncMirrorGhosts();
+    updateGuide();
 
     $('#place-dims').textContent = `L ${(p.ext[0] * p.size / 10).toFixed(1)} × H ${(p.ext[1] * p.size / 10).toFixed(1)} × P ${(p.ext[2] * p.size / 10).toFixed(1)} cm`;
     $('#place-size-label').textContent = (p.size / 10).toFixed(1) + ' cm';
     $('#pl-size').value = Math.round(p.size);
     const deg = (r) => { let d = Math.round((r * 180 / Math.PI) % 360); if (d < 0) d += 360; return d; };
     $('#place-angles-label').textContent = `Y: ${deg(p.yaw)}° · X: ${deg(p.pitch)}° · Z: ${deg(p.roll)}°`;
-    ghostMat.opacity = opts.boolPreview ? 0.3 : 0.78;       // avec l'aperçu, on voit le résultat à travers la forme
+    ghostMat.opacity = opts.boolPreview && !p.keep ? 0.3 : 0.78;       // avec l'aperçu, on voit le résultat à travers la forme
     schedulePreview();
     invalidate();
   }
@@ -1590,6 +1703,11 @@
   const mirM4 = new THREE.Matrix4();
   function syncMirrorGhosts() {
     const p = placement, xs = xfs();
+    if (p.keep) {                                         // pièce importée : pas de copie miroir (le maillage reste celui du fichier)
+      $('#pl-mirror').hidden = true;
+      p.ghosts.forEach((m) => { m.visible = false; });
+      return;
+    }
     // par défaut : un objet posé sur le plateau reste seul ; posé sur la sculpture (yeux, oreilles…), la symétrie le double.
     // Le bouton « Miroir » reprend la main.
     if (p.mirrorAuto) p.mirror = sym !== 'off' && !p.hit.floor;
@@ -1625,7 +1743,10 @@
     clearPreview();
     scene.remove(placement.mesh);
     for (const g of placement.ghosts) scene.remove(g);
+    scene.remove(placement.guide);
+    placement.guide.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
     placement.geo.dispose();
+    if (placement.replacing && !placement.done) addPartRaw(placement.replacing);      // déplacement annulé : la pièce revient
     placement = null;
     setPlacing(false);
   }
@@ -1638,12 +1759,12 @@
     if (pvEntry) { clay.undoEntry(pvEntry); pvEntry = null; invalidate(); }
   }
   function schedulePreview() {
-    if (!opts.boolPreview || !placement || pvTimer) return;
+    if (!opts.boolPreview || !placement || placement.keep || pvTimer) return;
     pvTimer = setTimeout(runPreview, Math.max(0, pvLast + Math.max(80, pvCost * 3) - performance.now()));
   }
   function runPreview() {
     pvTimer = 0;
-    if (!placement || !opts.boolPreview) return;
+    if (!placement || placement.keep || !opts.boolPreview) return;
     const t0 = performance.now();
     if (pvEntry) { clay.undoEntry(pvEntry); pvEntry = null; }
     pvEntry = placementEdit(placement);
@@ -1651,7 +1772,8 @@
     invalidate();
   }
   /** Colle ou creuse la forme (et ses copies miroir) dans la sculpture ; retourne l'entrée d'historique (ou null) */
-  function placementEdit(p) {
+  /** La forme dans le monde (mm) : sommets du maillage de base transformés par sa position, sa rotation et sa taille */
+  function placementWorld(p) {
     p.mesh.updateMatrix();
     const e = p.mesh.matrix.elements;
     const b = p.base, n = b.length;
@@ -1662,6 +1784,10 @@
       world[i + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
       world[i + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
     }
+    return world;
+  }
+  function placementEdit(p) {
+    const world = placementWorld(p);
     const m = p.carve ? 'remove' : 'add';
     clay.beginEdit();
     const pc = [p.mesh.position.x, p.mesh.position.y, p.mesh.position.z];
@@ -1680,6 +1806,17 @@
     const p = placement;
     if (!p) return;
     clearPreview();
+    if (p.keep) {                                         // pièce importée : le maillage d'origine est gardé tel quel
+      const part = makePart(p.name, placementWorld(p));
+      addPartRaw(part);
+      pushUndo(p.replacing ? { partOp: 'swap', from: p.replacing, to: part } : { partOp: 'add', part });
+      Sfx.place();
+      p.done = true;
+      cancelPlacement();
+      setTool('add');
+      toast('Pièce posée : son maillage est gardé tel quel (exporté sans aucune modification).');
+      return;
+    }
     const entry = placementEdit(p);
     if (!entry) toast(p.carve ? 'Il n’y a rien à creuser à cet endroit !' : 'La forme est en dehors du plateau !');
     pushUndo(entry);
@@ -1722,19 +1859,16 @@
   $('#pl-floor').addEventListener('click', () => {
     if (placement) { placement.hit.floor = true; placement.hit.y = 0; placement.offY = 0; updateGhost(); toast('Forme posée au sol du plateau'); }
   });
-  const sizeMax = () => 0.9 * WL;
+  const sizeMax = () => (placement ? placement.maxSize : 0.9 * WL);
   $('#pl-bigger').addEventListener('click', () => { if (placement) { placement.size = Math.min(sizeMax(), placement.size * 1.15); updateGhost(); } });
   $('#pl-smaller').addEventListener('click', () => { if (placement) { placement.size = Math.max(5, placement.size / 1.15); updateGhost(); } });
   $('#pl-double').addEventListener('click', () => { if (placement) { placement.size = Math.min(sizeMax(), placement.size * 2); updateGhost(); } });
   $('#pl-half').addEventListener('click', () => { if (placement) { placement.size = Math.max(5, placement.size * 0.5); updateGhost(); } });
   $('#pl-size').addEventListener('input', (e) => { if (placement) { placement.size = +e.target.value; updateGhost(); } });
   $$('.chip[data-scale]').forEach((chip) => chip.addEventListener('click', () => { if (placement) { placement.size = +chip.dataset.scale; updateGhost(); } }));
-  $('#pl-add').addEventListener('click', () => {
-    if (placement) { placement.carve = false; $('#pl-add').classList.add('active'); $('#pl-carve').classList.remove('active'); schedulePreview(); }
-  });
-  $('#pl-carve').addEventListener('click', () => {
-    if (placement) { placement.carve = true; $('#pl-carve').classList.add('active'); $('#pl-add').classList.remove('active'); schedulePreview(); }
-  });
+  $('#pl-add').addEventListener('click', () => setPlaceOp('add'));
+  $('#pl-carve').addEventListener('click', () => setPlaceOp('carve'));
+  $('#pl-keep').addEventListener('click', () => setPlaceOp('keep'));
 
   /* ------------------------------------------------------------------ Fenêtres, formes, import */
   function openModal(id) { $(id).hidden = false; }
@@ -1791,18 +1925,19 @@
 
   function handleFile(file) {
     const ext = (file.name.split('.').pop() || '').toLowerCase();
-    if (ext !== 'stl' && ext !== 'obj') { toast('Je lis les fichiers .stl et .obj'); return; }
+    if (ext !== 'stl' && ext !== 'obj' && ext !== 'pate3d' && ext !== 'json') { toast('Je lis les projets .pate3d et les fichiers 3D .stl et .obj'); return; }
     const reader = new FileReader();
     reader.onerror = () => toast('Impossible de lire ce fichier');
     reader.onload = () => {
+      if (ext === 'pate3d' || ext === 'json') { closeModals(); openProject(String(reader.result)); return; }
       try {
         const soup = ext === 'stl' ? IO.parseSTL(reader.result) : IO.parseOBJ(reader.result);
         if (soup.length < 9) { toast('Ce fichier ne contient pas de forme 3D'); return; }
         const nTri = Math.round(soup.length / 9);
         if (nTri > 500000) { toast('Ce fichier est trop gros (plus de 500 000 triangles)'); return; }
         closeModals();
-        startPlacement(soup, file.name.replace(/\.[^.]+$/, '').slice(0, 24));
-        toast(`Fichier ${file.name} chargé (${nTri.toLocaleString('fr-FR')} triangles)`);
+        startPlacement(soup, file.name.replace(/\.[^.]+$/, '').slice(0, 24), true, { imported: true });
+        toast(`Fichier ${file.name} chargé (${nTri.toLocaleString('fr-FR')} triangles) : maillage original gardé`);
       } catch (err) {
         console.error(err);
         toast('Ce fichier n’a pas pu être lu. Vérifie le format STL ou OBJ.');
@@ -1848,6 +1983,7 @@
     closeModals();
     cancelPlacement();
     undoStack.length = 0; redoStack.length = 0;
+    clearParts();
     clay.reset(id, startAir ? 22 : 0);              // « en l'air » : la forme flotte 22 mm au-dessus du plateau (on peut ajouter dessous)
     refreshUndo();                                 // met aussi à jour l'état « surface vide »
     goTo(Object.assign(defaultView(), { az: nearestAngle(view.az, 0) }));
@@ -1896,6 +2032,7 @@
   function applyDisplay() {
     const real = opts.display === 'real';
     clay.useMaterial(real ? clayReal : clayMatcap);
+    for (const p of parts) p.mesh.material = real ? partReal : partMatcap;
     lights.visible = real;
     shadowMesh.visible = opts.display !== 'eco';
     plateTex.anisotropy = opts.display === 'eco' ? 1 : Math.min(8, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1);
@@ -2027,10 +2164,13 @@
     $('#print-stats').innerHTML =
       'Taille : ' + (t.size[0] / 10).toFixed(1) + ' × ' + (t.size[1] / 10).toFixed(1) + ' × ' + (t.size[2] / 10).toFixed(1) + ' cm<br>' +
       'Matière : ' + vol.toFixed(1) + ' cm³ · ' + m.nTri.toLocaleString('fr-FR') + ' triangles · fichier ≈ ' + (m.nTri * 50 / 1e6).toFixed(1) + ' Mo (grille ' + m.res + ')' +
-      (m.removed ? '<br>' + m.removed + ' petit(s) débris retiré(s) automatiquement' : '');
+      (m.removed ? '<br>' + m.removed + ' petit(s) débris retiré(s) automatiquement' : '') +
+      (m.partsCount ? '<br>' + m.partsCount + ' pièce(s) importée(s) gardée(s) telle(s) quelle(s) : ' + m.partsTri.toLocaleString('fr-FR') + ' triangles, sans lissage' : '');
   }
   $('#btn-print').addEventListener('click', () => {
     endStroke();
+    exportMm = parts.length ? 0 : (exportMm === 0 ? 80 : exportMm);          // avec des pièces importées : taille réelle (1 : 1)
+    $$('#print-sizes .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.mm === exportMm));
     openModal('#modal-print');
     computeExport();
   });
@@ -2044,7 +2184,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=46');
+        exportWorker = new Worker('js/exportWorker.js?v=47');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }
@@ -2064,13 +2204,14 @@
   }
   function showExport(m) {
     const st = $('#print-status');
-    if (m.nTri === 0) {
+    if (m.nTri === 0 && !parts.length) {
       st.className = 'status bad'; st.textContent = 'Il n’y a rien à imprimer : ajoute de l’argile !';
       return;
     }
+    m = withParts(m);
     exportMesh = m;
     if (m.manifold) {
-      st.className = 'status ok'; st.textContent = 'Ton objet est solide et prêt pour l’impression 3D !';
+      st.className = 'status ok'; st.textContent = m.partsCount ? 'Ton objet est prêt. Les pièces importées sont exportées exactement comme dans ton fichier (non vérifiées).' : 'Ton objet est solide et prêt pour l’impression 3D !';
     } else {
       st.className = 'status bad'; st.textContent = 'Il y a un petit souci dans la forme (' + m.problems + '). Lisse un peu et réessaie.';
     }
@@ -2113,6 +2254,170 @@
   $('#dl-obj').addEventListener('click', () => { if (exportMesh) { IO.download(IO.writeOBJ(exportMesh, exportMm), 'ma-sculpture.obj'); Sfx.tada(); toast(exportMesh.hasColors ? 'Ton OBJ est prêt, avec ses couleurs !' : 'Bravo ! Ton fichier est prêt.'); } });
   $('#dl-ply').addEventListener('click', () => { if (exportMesh) { IO.download(IO.writePLY(exportMesh, exportMm), 'ma-sculpture.ply'); Sfx.tada(); toast('Ton PLY en couleurs est prêt !'); } });
 
+  /* ------------------------------------------------------------------ Pièces importées (maillage d'origine) et projet */
+  /* Un fichier STL / OBJ importé peut être gardé « tel quel » : ses triangles ne sont ni transformés en argile, ni lissés, ni rééchantillonnés.
+     Ils sont seulement placés (position, rotation, taille choisies), affichés, enregistrés dans le projet et exportés exactement comme ils sont. */
+  const PART_RGB = [180, 195, 214];
+  let partSeq = 1;
+  function makePart(name, soup) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(soup, 3));
+    geo.computeVertexNormals();                                  // sommets non partagés : arêtes vives conservées (facettes)
+    const mesh = new THREE.Mesh(geo, opts.display === 'real' ? partReal : partMatcap);
+    mesh.frustumCulled = false;
+    return { id: partSeq++, name, soup, mesh };
+  }
+  function addPartRaw(p) {
+    if (parts.indexOf(p) >= 0) return;
+    scene.add(p.mesh); parts.push(p);
+    refreshParts(); invalidate(); saveParts();
+  }
+  function removePartRaw(p) {
+    const i = parts.indexOf(p);
+    if (i < 0) return;
+    scene.remove(p.mesh); parts.splice(i, 1);
+    refreshParts(); invalidate(); saveParts();
+  }
+  function clearParts() {
+    for (const p of parts.slice()) { removePartRaw(p); p.mesh.geometry.dispose(); }
+  }
+  /** annuler / refaire : add = pièce posée ; remove = pièce supprimée ; swap = pièce déplacée (from → to) */
+  function applyPartOp(e, undoing) {
+    if (e.partOp === 'add') { if (undoing) removePartRaw(e.part); else addPartRaw(e.part); }
+    else if (e.partOp === 'remove') { if (undoing) addPartRaw(e.part); else removePartRaw(e.part); }
+    else if (e.partOp === 'swap') {
+      if (undoing) { removePartRaw(e.to); addPartRaw(e.from); } else { removePartRaw(e.from); addPartRaw(e.to); }
+    }
+  }
+  function refreshParts() {
+    $('#sec-parts').hidden = parts.length === 0;
+    const box = $('#parts-list');
+    box.textContent = '';
+    for (const p of parts) {
+      const row = document.createElement('div');
+      row.className = 'part-row';
+      row.innerHTML = '<span class="part-name"><b></b><small></small></span><button class="mini mv" title="Déplacer, tourner ou redimensionner cette pièce">Déplacer</button><button class="mini del" title="Supprimer cette pièce" aria-label="Supprimer cette pièce">&#10005;</button>';
+      row.querySelector('b').textContent = p.name;
+      row.querySelector('small').textContent = Math.round(p.soup.length / 9).toLocaleString('fr-FR') + ' triangles';
+      row.querySelector('.mv').addEventListener('click', () => editPart(p));
+      row.querySelector('.del').addEventListener('click', () => { cancelPlacement(); removePartRaw(p); pushUndo({ partOp: 'remove', part: p }); toast('Pièce supprimée (Oups la rend)'); });
+      box.appendChild(row);
+    }
+  }
+  function editPart(p) {
+    cancelPlacement(); endStroke();
+    removePartRaw(p);
+    startPlacement(p.soup, p.name, true, { imported: true, replacing: p, keepPos: true });
+  }
+
+  /* enregistrement automatique des pièces (IndexedDB : bien plus de place que le stockage de la sculpture) */
+  const PartsDB = (() => {
+    const open = () => new Promise((res, rej) => {
+      try {
+        const r = indexedDB.open('pate3d', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('kv');
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      } catch (e) { rej(e); }
+    });
+    return {
+      get(key) { return open().then((db) => new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(key); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); })); },
+      set(key, val) { return open().then((db) => new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(val, key); t.oncomplete = () => res(); t.onerror = () => rej(t.error); })); }
+    };
+  })();
+  let partsSaveTimer = 0;
+  function saveParts() {
+    clearTimeout(partsSaveTimer);
+    partsSaveTimer = setTimeout(() => { PartsDB.set('parts', parts.map((p) => ({ name: p.name, soup: p.soup }))).catch(() => { /* ignore */ }); }, 700);
+  }
+
+  /* fichier projet « .pate3d » : la sculpture (grille, couleurs, palette) et les pièces importées, pour la reprendre et la modifier plus tard */
+  function f32ToB64(f) {
+    const u8 = new Uint8Array(f.buffer, f.byteOffset, f.byteLength);
+    let s = '';
+    for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+  function b64ToF32(b) {
+    const s = atob(b), u8 = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+    return new Float32Array(u8.buffer, 0, Math.floor(u8.length / 4));
+  }
+  function saveProject() {
+    endStroke();
+    const hadPreview = !!pvEntry;
+    if (hadPreview) clearPreview();                              // jamais l'aperçu dans le fichier
+    const data = {
+      format: 'pate3d-project', version: 1, app: 'Pâte3D', saved: new Date().toISOString(),
+      sculpture: clay.serialize(), paint: clay.paint,
+      parts: parts.map((p) => ({ name: p.name, soup: f32ToB64(p.soup) }))
+    };
+    if (hadPreview) schedulePreview();
+    IO.download(new Blob([JSON.stringify(data)], { type: 'application/json' }), 'ma-sculpture.pate3d');
+    Sfx.tada();
+    toast('Projet enregistré : « Ouvrir » le rouvre tel quel pour continuer à le modifier.');
+  }
+  function openProject(text) {
+    let d = null;
+    try { d = JSON.parse(text); } catch (e) { /* ignore */ }
+    if (!d || d.format !== 'pate3d-project' || typeof d.sculpture !== 'string') { toast('Ce fichier n’est pas un projet Pâte3D'); return; }
+    cancelPlacement(); endStroke();
+    try { clay.deserialize(d.sculpture); } catch (e) { toast('Ce projet est abîmé : impossible de l’ouvrir'); return; }
+    if (!clay.loadedColors) clay.col.fill(clay.paint);
+    if (Number.isFinite(d.paint)) clay.paint = clamp(d.paint | 0, 0, clay.pal.length - 1);
+    syncWorld();
+    opts.world = WL; saveOpts();                                  // le plateau du projet devient le plateau de travail
+    const wantN = gridSizeFor(WL, opts.res);                      // la résolution reste celle des options : la sculpture est rééchantillonnée
+    if (clay.resolution !== wantN) clay.setWorld(WL, wantN);
+    syncWorld();
+    buildWorld();
+    clearParts();
+    for (const pp of d.parts || []) {
+      try { addPartRaw(makePart(String(pp.name || 'Pièce').slice(0, 40), b64ToF32(pp.soup))); } catch (e) { /* pièce illisible : ignorée */ }
+    }
+    renderPalette(); pickColor(clay.paint); savePalette();
+    goTo(Object.assign(defaultView(), { az: nearestAngle(view.az, 0) }));
+    afterGridChange('Projet ouvert');
+    syncOptionsUI();
+    resize();
+  }
+  $('#btn-save').addEventListener('click', saveProject);
+
+  /** Ajoute les pièces importées, telles quelles, au maillage d'export (sommets soudés sans aucun arrondi) */
+  function withParts(m) {
+    if (!parts.length) return m;
+    const welded = parts.map((p) => IO.weldSoup(p.soup));
+    const base = m.nTri > 0;
+    let nv = base ? m.nVert : 0, ni = base ? m.indices.length : 0;
+    for (const w of welded) { nv += w.positions.length / 3; ni += w.indices.length; }
+    const pos = new Float32Array(nv * 3), idx = new Uint32Array(ni), col = new Uint8Array(nv * 3);
+    let vo = 0, io = 0, vol = 0;
+    const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    if (base) {
+      pos.set(m.positions); col.set(m.colors); idx.set(m.indices);
+      vo = m.nVert; io = m.indices.length; vol = m.volume;
+      for (let k = 0; k < 3; k++) { min[k] = m.min[k]; max[k] = m.max[k]; }
+    }
+    for (const w of welded) {
+      const wp = w.positions, wi = w.indices, nvw = wp.length / 3;
+      pos.set(wp, vo * 3);
+      for (let i = 0; i < nvw; i++) {
+        col[(vo + i) * 3] = PART_RGB[0]; col[(vo + i) * 3 + 1] = PART_RGB[1]; col[(vo + i) * 3 + 2] = PART_RGB[2];
+        for (let k = 0; k < 3; k++) { const v = wp[i * 3 + k]; if (v < min[k]) min[k] = v; if (v > max[k]) max[k] = v; }
+      }
+      for (let t = 0; t < wi.length; t += 3) {
+        const a = wi[t] * 3, b = wi[t + 1] * 3, c = wi[t + 2] * 3;
+        vol += (wp[a] * (wp[b + 1] * wp[c + 2] - wp[b + 2] * wp[c + 1]) - wp[a + 1] * (wp[b] * wp[c + 2] - wp[b + 2] * wp[c]) + wp[a + 2] * (wp[b] * wp[c + 1] - wp[b + 1] * wp[c])) / 6;
+      }
+      for (let k = 0; k < wi.length; k++) idx[io + k] = wi[k] + vo;
+      vo += nvw; io += wi.length;
+    }
+    return Object.assign({}, m, {
+      positions: pos, indices: idx, colors: col, nVert: nv, nTri: ni / 3, min, max, volume: vol, hasColors: base,
+      manifold: base ? m.manifold : true, partsCount: parts.length, partsTri: welded.reduce((a, w) => a + w.indices.length / 3, 0)
+    });
+  }
+
   /* ------------------------------------------------------------------ Démarrage */
   let loaded = false;
   let ci = 0;
@@ -2134,6 +2439,11 @@
   renderPalette();
   pickColor(clay.paint);
   refreshUndo();
+  refreshParts();
+  PartsDB.get('parts').then((list) => {
+    if (!Array.isArray(list) || parts.length) return;
+    for (const pp of list) { try { if (pp.soup && pp.soup.length >= 9) addPartRaw(makePart(String(pp.name || 'Pièce'), new Float32Array(pp.soup))); } catch (e) { /* ignore */ } }
+  }).catch(() => { /* ignore */ });
   setSym(opts.sym, false);
   applyDisplay();
   setTool('add');
@@ -2155,7 +2465,7 @@
     clay, view, goal: view, pick, camera, renderer, opts, cursors, stampGhost, drawGizmo, gHits: () => gHits,
     dbg: () => ({ mode, ptrs: ptrs.size, queued: strokeQ.length, tool, placing: !!placement, stroke: !!stroke }),
     step: () => { if (raf) cancelAnimationFrame(raf); raf = 0; frame(performance.now()); },
-    startPlacement, getPlacement: () => placement, getStroke: () => stroke, applyWorld, gridSizeFor, zoomPos, distFromPos, applyPerf, setTool, keyMods,
+    startPlacement, getPlacement: () => placement, getStroke: () => stroke, applyWorld, gridSizeFor, zoomPos, distFromPos, applyPerf, setTool, keyMods, parts, withParts, saveProject, openProject, getPlacementMode: () => placementMode, placementWorld,
     setPixelRatio: (v) => setPixelRatio(v, 0), getPixelRatio: () => pr, freeC
   };
 })();
