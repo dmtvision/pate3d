@@ -202,3 +202,8 @@ s'ouvre avec toutes ses commandes (haut / bas / déplacement).
   Pendant le réglage : aperçu instantané (mise à l'échelle de l'affichage) ; **Appliquer** (ou le premier geste suivant) calcule une seule fois, avec annulation ; les pièces importées sont
   mises à l'échelle exactement. Limite : la sculpture doit rester dans le plateau (message sinon).
 - **Forme en cours de placement** : dimensions L / H / P modifiables (cm), Maj + molette pour la taille ; la forme reste posée au sol et à sa place quand sa taille change.
+
+## Rendre une pièce importée modifiable (v55)
+Une pièce grise garde le maillage du fichier et ne se sculpte pas. Le bouton **Sculpter** de sa ligne (colonne de droite) la fond dans l'argile (voxélisation à la résolution
+courante, couleur choisie, annulable d'un « Oups » qui rend le maillage d'origine) ; « Coller » au placement fait la même chose directement. Toucher une pièce grise avec un outil
+de sculpture n'agit pas derrière elle : un message explique quoi faire.

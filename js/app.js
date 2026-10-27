@@ -1272,6 +1272,7 @@
     if (tool !== 'orbit' || eraser) {
       const rt = eraser ? { tool: 'remove', inv: false } : resolveTool(tool, readMods(e));   // Maj : lisser · Ctrl : l'inverse
       const h = pick(e, clay.f);
+      if (parts.length && partInFront(e, h)) { mode = 'none'; return; }       // une pièce grise est devant : on explique, on ne sculpte pas derrière
       if (allowed(h, rt.tool)) { setCursorColor(rt.tool); beginStroke(h, rt, e); mode = 'stroke'; invalidate(); return; }
     } else {
       // double-touche : on s'approche de l'endroit touché
@@ -1622,7 +1623,7 @@
     setPlacementMode('move');
     setPlaceOp(placement.keep ? 'keep' : 'add');
     setHint(placement.imported
-      ? 'Fichier prêt, à sa taille d’origine : glisse-le pour le placer, puis « Poser ». Son maillage reste exactement celui de ton fichier.'
+      ? 'Fichier prêt, à sa taille d’origine. « Garder tel quel » : maillage fidèle mais non sculptable (pièce grise). « Coller » : fondu dans l’argile, modifiable.'
       : 'Forme prête ! Glisse-la ou touche l’endroit où la poser, change sa taille, puis appuie sur « Poser ».');
   }
 
@@ -1838,7 +1839,7 @@
       p.done = true;
       cancelPlacement();
       setTool('add');
-      toast('Pièce posée : son maillage est gardé tel quel (exporté sans aucune modification).');
+      toast('Pièce grise posée : maillage gardé tel quel. Pour la sculpter, touche « Sculpter » dans la colonne de droite.');
       return;
     }
     const entry = placementEdit(p);
@@ -2336,7 +2337,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=51');
+        exportWorker = new Worker('js/exportWorker.js?v=55');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }
@@ -2420,7 +2421,7 @@
     return { id: partSeq++, name, soup, mesh };
   }
   function addPartRaw(p) {
-    if (parts.indexOf(p) >= 0) return;
+    if (!p || parts.indexOf(p) >= 0) return;
     scene.add(p.mesh); parts.push(p);
     refreshParts(); invalidate(); saveParts();
   }
@@ -2452,13 +2453,40 @@
     for (const p of parts) {
       const row = document.createElement('div');
       row.className = 'part-row';
-      row.innerHTML = '<span class="part-name"><b></b><small></small></span><button class="mini mv" title="Déplacer, tourner ou redimensionner cette pièce">Déplacer</button><button class="mini del" title="Supprimer cette pièce" aria-label="Supprimer cette pièce">&#10005;</button>';
+      row.innerHTML = '<span class="part-name"><b></b><small></small></span><button class="mini mv" title="Déplacer, tourner ou redimensionner cette pièce">Déplacer</button><button class="mini sc" title="Fondre cette pièce dans l’argile pour pouvoir la sculpter (le maillage d’origine est alors remplacé par de l’argile)">Sculpter</button><button class="mini del" title="Supprimer cette pièce" aria-label="Supprimer cette pièce">&#10005;</button>';
       row.querySelector('b').textContent = p.name;
       row.querySelector('small').textContent = Math.round(p.soup.length / 9).toLocaleString('fr-FR') + ' triangles';
       row.querySelector('.mv').addEventListener('click', () => editPart(p));
+      row.querySelector('.sc').addEventListener('click', () => convertPart(p));
       row.querySelector('.del').addEventListener('click', () => { cancelPlacement(); removePartRaw(p); pushUndo({ partOp: 'remove', part: p }); toast('Pièce supprimée (Oups la rend)'); });
       box.appendChild(row);
     }
+  }
+  /** Fond une pièce dans l'argile (voxélisation) : elle devient modifiable avec tous les outils ; annulable (Oups) */
+  function convertPart(p) {
+    cancelPlacement(); endStroke(); commitResize();
+    clay.beginEdit();
+    clay.stampMesh(p.soup, 'add');
+    clay.relaxBox(0.5); clay.relaxBox(0.4);
+    const entry = clay.endEdit();
+    if (!entry) { toast('Cette pièce est en dehors du plateau : impossible de la fondre dans l’argile'); return; }
+    removePartRaw(p);
+    pushUndo({ partOp: 'group', clay: entry, swaps: [{ from: p, to: null }] });
+    Sfx.place(); shadowDirty = true; invalidate();
+    toast('La pièce est maintenant en argile : tu peux la sculpter (Oups pour revenir au maillage d’origine).');
+  }
+  /** Un outil de sculpture touché sur une pièce grise (plus proche que l'argile visée) : on explique pourquoi rien ne se passe */
+  let partHintT = -1e9;
+  function partInFront(e, h) {
+    rayFrom(e);                                   // règle le lanceur de rayons sur le pointeur
+    const hit = raycaster.intersectObjects(parts.map((p) => p.mesh), false)[0];
+    if (!hit || (h && !h.floor && h.t < hit.distance)) return false;
+    if (h && h.floor && h.t < hit.distance) return false;
+    if (performance.now() - partHintT > 3000) {
+      partHintT = performance.now();
+      toast('Cette pièce grise garde le maillage de ton fichier : touche « Sculpter » à droite pour la fondre dans l’argile et la modifier.');
+    }
+    return true;
   }
   function editPart(p) {
     cancelPlacement(); endStroke();

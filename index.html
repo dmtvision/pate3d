@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=51">
+  <link rel="stylesheet" href="css/style.css?v=55">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
     /* secours si le premier CDN est injoignable */
@@ -316,9 +316,9 @@
         <div class="pgroup act-group">
           <button id="pl-mirror" class="chip mirror-chip" hidden title="La symétrie pose aussi une copie de l'autre côté">Miroir : oui</button>
           <div class="seg">
-            <button id="pl-add" class="seg-btn active" title="Fusionner la forme avec l'argile">Coller</button>
+            <button id="pl-add" class="seg-btn active" title="Fondre la forme dans l'argile : elle devient modifiable avec tous les outils (le maillage est alors converti en argile)">Coller</button>
             <button id="pl-carve" class="seg-btn" title="Creuser l'argile avec la forme">Creuser</button>
-            <button id="pl-keep" class="seg-btn" hidden title="Garder le maillage de ton fichier tel quel : rien n'est lissé ni transformé, il est exporté exactement comme il est">Garder tel quel</button>
+            <button id="pl-keep" class="seg-btn" hidden title="Garder le maillage de ton fichier tel quel : rien n'est lissé ni transformé, il est exporté exactement comme il est. Il ne peut pas être sculpté (bouton « Sculpter » plus tard pour le fondre dans l'argile)">Garder tel quel</button>
           </div>
           <div class="row actions-final">
             <button id="pl-cancel" class="big cancel" title="Annuler sans poser"><svg class="ic"><use href="#i-close"/></svg>Annuler</button>
@@ -510,10 +510,10 @@
 
   <noscript><div class="modal"><div class="card small"><h2>Oups</h2><p>Pâte3D a besoin de JavaScript pour fonctionner.</p></div></div></noscript>
 
-  <script src="js/sound.js?v=51"></script>
-  <script src="js/starters.js?v=51"></script>
-  <script src="js/clay.js?v=51"></script>
-  <script src="js/io.js?v=51"></script>
-  <script src="js/app.js?v=51"></script>
+  <script src="js/sound.js?v=55"></script>
+  <script src="js/starters.js?v=55"></script>
+  <script src="js/clay.js?v=55"></script>
+  <script src="js/io.js?v=55"></script>
+  <script src="js/app.js?v=55"></script>
 </body>
 </html>
