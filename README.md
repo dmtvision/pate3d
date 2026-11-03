@@ -215,3 +215,9 @@ de sculpture n'agit pas derrière elle : un message explique quoi faire.
   nouveau réglage « Très fine » (256³, ordinateur puissant) et les préréglages / résolutions plus basses restent disponibles dans les Options pour les ordinateurs modestes. Mesures à 223³ :
   trait ≈ 0,1 ms, annuler ≈ 1 ms, maillage complet ≈ 65 ms, sauvegarde ≈ 0,3 Mo. L'export n'est jamais moins fin que la sculpture.
 - **Import** : jusqu'à **3 000 000 de triangles** (avant 500 000) ; au-delà de 400 000 triangles, pas d'aperçu du booléen et la sélection d'une pièce se fait sur sa boîte englobante.
+
+## Formes de départ lissées (v62)
+Après sa construction, chaque forme de départ reçoit un **flou gaussien de 2,6 mm** (`Clay.blurBox(sigma)`, moyennes glissantes séparables, indépendant de la résolution) : les jonctions entre les blocs (sphères,
+ellipsoïdes, cônes) disparaissent et tout est arrondi ; les parties plus fines que ~5 mm s'effacent, donc les détails minuscules (nez, antennes, bouts d'oreilles, pointes) ont été supprimés ou épaissis
+(rayons ≥ 8 mm). La rangée du sol suit celle du dessus (pas de rebord au pied), et les normales des parois au contact du plateau ne sont plus faussées par le vide sous le plateau.
+Vérifié : les 37 formes s'exportent étanches (manifold), sans débris.

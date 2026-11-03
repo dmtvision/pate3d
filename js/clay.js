@@ -332,7 +332,7 @@
   let vx = 0, vy = 0, vz = 0, vnx = 0, vny = 0, vnz = 0;
   function gradAt(f, idx, i, j, k, out) {
     const xm = i > 0 ? f[idx - 1] : f[idx], xp = i < N - 1 ? f[idx + 1] : f[idx];
-    const ym = j > 0 ? f[idx - N] : f[idx], yp = j < N - 1 ? f[idx + N] : f[idx];
+    const ym = j > FK ? f[idx - N] : f[idx], yp = j < N - 1 ? f[idx + N] : f[idx];   // au sol : différence à sens unique (le vide sous le plateau ne doit pas pencher les normales des parois)
     const zm = k > 0 ? f[idx - N2] : f[idx], zp = k < N - 1 ? f[idx + N2] : f[idx];
     out[0] = xm - xp; out[1] = ym - yp; out[2] = zm - zp; // = -gradient : vers l'extérieur
   }
@@ -637,6 +637,7 @@
       this.beginEdit();
       const st = global.ClayStarters && global.ClayStarters.get(kind || 'ball');
       this.build(global.ClayStarters && lift ? global.ClayStarters.lifted(st ? st.ops : [['s', 0, 15, 0, 16]], lift) : (st ? st.ops : [['s', 0, 15, 0, 16]]));
+      this.blurBox(2.6);                         // formes de départ lisses : on ne voit plus les blocs qui les composent
       this.endEdit();
       this.markAll();
     }
@@ -1221,6 +1222,42 @@
           }
       this._inherit(x0, y0, z0, x1, y1, z1);
       this.markBox(x0, y0, z0, x1, y1, z1);
+    }
+
+    /** Flou gaussien de la zone modifiée (écart-type sigma en mm, indépendant de la résolution) : estompe les jonctions entre les blocs de
+     *  construction (sphères, ellipsoïdes…) et arrondit tout ; les parties plus fines que ~2·sigma s'effacent. Le sol reste plat. */
+    blurBox(sigma) {
+      const b = this.box;
+      const sv = sigma / H;
+      if (!b || sv < 0.5) return;
+      const pad = Math.ceil(3 * sv) + 2;
+      const x0 = Math.max(0, b.x0 - pad), x1 = Math.min(N - 1, b.x1 + pad);
+      const y0 = Math.max(FK, b.y0 - pad), y1 = Math.min(N - 1, b.y1 + pad);
+      const z0 = Math.max(0, b.z0 - pad), z1 = Math.min(N - 1, b.z1 + pad);
+      const r = Math.max(1, Math.round((Math.sqrt(6 * sv * sv + 1) - 1) / 2));      // deux passes de moyenne glissante par axe
+      const f = this.f, w = 2 * r + 1;
+      const L = Math.max(x1 - x0, y1 - y0, z1 - z0) + 1;
+      const line = new Float32Array(L), out = new Float32Array(L);
+      const pass = (start, count, stride, base) => {                                 // moyenne glissante sur une ligne, bords prolongés
+        for (let i = 0; i < count; i++) line[i] = f[base + (start + i) * stride];
+        let sum = 0;
+        for (let k = -r; k <= r; k++) sum += line[Math.min(count - 1, Math.max(0, k))];
+        for (let i = 0; i < count; i++) {
+          out[i] = sum / w;
+          sum += line[Math.min(count - 1, i + r + 1)] - line[Math.max(0, i - r)];
+        }
+        for (let i = 0; i < count; i++) f[base + (start + i) * stride] = out[i];
+      };
+      for (let it = 0; it < 2; it++) {
+        for (let k = z0; k <= z1; k++) for (let j = y0; j <= y1; j++) pass(x0, x1 - x0 + 1, 1, j * N + k * N2);
+        for (let k = z0; k <= z1; k++) for (let i = x0; i <= x1; i++) pass(y0, y1 - y0 + 1, N, i + k * N2);
+        for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) pass(z0, z1 - z0 + 1, N2, i + j * N);
+      }
+      for (let k = z0; k <= z1; k++) {
+        const o = FK * N + k * N2;
+        for (let i = x0; i <= x1; i++) f[o + i] = f[o + i + N];                      // la rangée du sol suit celle du dessus : pas de rebord ni de normales faussées (le dessous reste plat à moins de 0,1 mm)
+      }
+      this._grow(x0, y0, z0, x1, y1, z1);
     }
 
     /** Colle (add) ou creuse (remove) un maillage "soupe de triangles" en coordonnées monde. */
