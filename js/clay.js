@@ -1026,11 +1026,21 @@
     /** Étire / écrase toute la sculpture (facteurs sx, sy, sz) en gardant le pied posé au sol. */
     scaleAbout(sx, sy, sz, ax, az) {
       const f = this.f;
+      // seuls les blocs qui portent une surface (ou en attente de maillage) peuvent contenir les extrémités : on ne balaie que leur boîte
+      let ca = NC, cb = -1, cc = NC, cd = -1, ce = NC, cf = -1;
+      for (let id = 0; id < this.chunks.length; id++) {
+        const m = this.chunks[id];
+        if (!((m && m.visible) || this.dirty.has(id))) continue;
+        const cx = id % NC, cy = Math.floor(id / NC) % NC, cz = Math.floor(id / (NC * NC));
+        if (cx < ca) ca = cx; if (cx > cb) cb = cx; if (cy < cc) cc = cy; if (cy > cd) cd = cy; if (cz < ce) ce = cz; if (cz > cf) cf = cz;
+      }
+      if (cb < 0) return null;
+      const X0 = ca * C, X1 = Math.min(N - 1, (cb + 1) * C), Y0 = cc * C, Y1 = Math.min(N - 1, (cd + 1) * C), Z0 = ce * C, Z1 = Math.min(N - 1, (cf + 1) * C);
       let x0 = N, y0 = N, z0 = N, x1 = -1, y1 = -1, z1 = -1;
-      for (let k = 0; k < N; k++)
-        for (let j = 0; j < N; j++) {
+      for (let k = Z0; k <= Z1; k++)
+        for (let j = Y0; j <= Y1; j++) {
           const o = j * N + k * N2;
-          for (let i = 0; i < N; i++) {
+          for (let i = X0; i <= X1; i++) {
             if (f[o + i] >= ISO) {
               if (i < x0) x0 = i; if (i > x1) x1 = i;
               if (j < y0) y0 = j; if (j > y1) y1 = j;

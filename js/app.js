@@ -21,7 +21,7 @@
   const rs = { on: false, base: null, sx: 1, sy: 1, sz: 1, lock: true, guide: null, warned: false };   // redimensionnement de la sculpture en cours
   let WL = 100, WH = 50;                       // plateau (mm) et sa moitié, lus dans le moteur
   const syncWorld = () => { const g = ClayEngine.grid(); WL = g.L; WH = g.HALF; };
-  const gridSizeFor = (lw, res) => clamp(Math.round(lw / (100 / (res - 1))) + 1, 40, 160);
+  const gridSizeFor = (lw, res) => clamp(Math.round(lw / (100 / (res - 1))) + 1, 40, 256);
 
   /* ---- options générales (mémorisées sur l'ordinateur : retrouvées à chaque ouverture) ---- */
   const lowEnd = (navigator.deviceMemory && navigator.deviceMemory <= 2) || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
@@ -42,7 +42,7 @@
   opts.boolPreview = !!opts.boolPreview;
   delete opts.pen;
   if (['off', 'force', 'size', 'both'].indexOf(opts.penMode) < 0) opts.penMode = 'force';
-  if (![40, 56, 80, 112].includes(+opts.res)) opts.res = lowEnd ? 56 : 112;
+  if (![40, 56, 80, 112, 144].includes(+opts.res)) opts.res = lowEnd ? 56 : 112;
   opts.res = +opts.res;
   opts.world = Number.isFinite(+opts.world) && +opts.world >= 60 && +opts.world <= 400 ? +opts.world : 200;
   if (![0.6, 1, 1.4].includes(+opts.sharp)) opts.sharp = 1;
@@ -634,7 +634,7 @@
   }
   function pushUndo(entry) {
     if (!entry) return;
-    refreshDims();
+    scheduleDims();
     undoStack.push(entry);
     if (undoStack.length > 25) undoStack.shift();
     redoStack.length = 0;
@@ -1784,7 +1784,7 @@
     if (pvEntry) { clay.undoEntry(pvEntry); pvEntry = null; invalidate(); }
   }
   function schedulePreview() {
-    if (!opts.boolPreview || !placement || placement.keep || pvTimer) return;
+    if (!opts.boolPreview || !placement || placement.keep || placement.base.length > 9 * 400000 || pvTimer) return;
     pvTimer = setTimeout(runPreview, Math.max(0, pvLast + Math.max(80, pvCost * 3) - performance.now()));
   }
   function runPreview() {
@@ -1929,7 +1929,7 @@
     emoji: s.emoji, name: s.name, pick: () => { closeModals(); startPlacement(IO.shapeSoup(THREE, s.id), s.name); }
   })), 'shape-grid');
   ['Personnages', 'Animaux', 'Objets', 'Bases'].forEach((cat) => {
-    const items = ClayStarters.list.filter((s) => s.cat === cat && s.id !== 'ball');   // la boule existe déjà dans les formes simples
+    const items = ClayStarters.list.filter((s) => s.cat === cat && s.id !== 'ball' && s.id !== 'ballair');   // la boule existe déjà dans les formes simples
     shapeSection(cat === 'Bases' ? 'Autres formes' : cat, items.map((s) => ({ emoji: s.emoji, name: s.name, pick: () => placeStarter(s) })));
   });
   function openShapes() {
@@ -1959,7 +1959,7 @@
         const soup = ext === 'stl' ? IO.parseSTL(reader.result) : IO.parseOBJ(reader.result);
         if (soup.length < 9) { toast('Ce fichier ne contient pas de forme 3D'); return; }
         const nTri = Math.round(soup.length / 9);
-        if (nTri > 500000) { toast('Ce fichier est trop gros (plus de 500 000 triangles)'); return; }
+        if (nTri > 3000000) { toast('Ce fichier est trop gros (plus de 3 000 000 de triangles)'); return; }
         closeModals();
         startPlacement(soup, file.name.replace(/\.[^.]+$/, '').slice(0, 24), true, { imported: true });
         toast(`Fichier ${file.name} chargé (${nTri.toLocaleString('fr-FR')} triangles) : maillage original gardé`);
@@ -2127,6 +2127,8 @@
     pushUndo({ partOp: 'group', clay: entry, swaps });
     Sfx.place(); shadowDirty = true; invalidate(); refreshDims();
   }
+  let dimsTimer = 0;
+  function scheduleDims() { clearTimeout(dimsTimer); dimsTimer = setTimeout(refreshDims, 350); }   // le calcul balaie la grille : jamais pendant un geste
   /** dimensions affichées (cm) : celles de la sculpture, ou celles de l'aperçu pendant le réglage */
   function refreshDims() {
     const b = rs.on ? rs.base : contentBounds();
@@ -2207,7 +2209,7 @@
     if (clay.resolution === target) return;
     cancelPlacement();
     clay.setWorld(WL, target);
-    afterGridChange(announce ? 'Résolution : ' + (n <= 40 ? 'minimale' : n <= 56 ? 'éco' : n >= 112 ? 'fine' : 'normale') : '');
+    afterGridChange(announce ? 'Résolution : ' + (n <= 40 ? 'minimale' : n <= 56 ? 'éco' : n >= 144 ? 'très fine' : n >= 112 ? 'fine' : 'normale') : '');
   }
   /** Change la taille du plateau : la sculpture reste au centre, posée sur le sol */
   function applyWorld(lw, announce) {
@@ -2327,8 +2329,9 @@
     openModal('#modal-print');
     computeExport();
   });
-  function denseTarget() { return Math.min(200, Math.max(144, clay.resolution * 2)); }
-  function ultraTarget() { return Math.min(240, Math.max(200, clay.resolution * 3)); }
+  /* jamais moins fin que la sculpture elle-même */
+  function denseTarget() { return Math.max(clay.resolution, Math.min(200, Math.max(144, clay.resolution * 2))); }
+  function ultraTarget() { return Math.max(clay.resolution, Math.min(240, Math.max(200, clay.resolution * 3))); }
   const EXPORT_PLAN = () => opts.exportQ === 'ultra' ? [ultraTarget(), 18] : opts.exportQ === 'dense' ? [denseTarget(), 14] : [0, 8];
 
   /* Le calcul se fait dans un Web Worker (interface toujours fluide) ; repli sur le fil principal si indisponible. */
@@ -2337,7 +2340,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=55');
+        exportWorker = new Worker('js/exportWorker.js?v=58');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }
@@ -2446,7 +2449,7 @@
     }
   }
   function refreshParts() {
-    refreshDims();
+    scheduleDims();
     $('#sec-parts').hidden = parts.length === 0;
     const box = $('#parts-list');
     box.textContent = '';
@@ -2478,8 +2481,18 @@
   /** Un outil de sculpture touché sur une pièce grise (plus proche que l'argile visée) : on explique pourquoi rien ne se passe */
   let partHintT = -1e9;
   function partInFront(e, h) {
-    rayFrom(e);                                   // règle le lanceur de rayons sur le pointeur
-    const hit = raycaster.intersectObjects(parts.map((p) => p.mesh), false)[0];
+    const ray = rayFrom(e);
+    let hit = null;
+    for (const p of parts) {                      // grosses pièces : boîte englobante seulement (le test triangle par triangle serait trop lent)
+      let d = null;
+      if (p.soup.length > 9 * 400000) {
+        const bb = partBounds(p), pt = ray.intersectBox(new THREE.Box3(new THREE.Vector3(...bb.min), new THREE.Vector3(...bb.max)), new THREE.Vector3());
+        if (pt) d = pt.distanceTo(ray.origin);
+      } else {
+        raycaster.intersectObject(p.mesh, false).forEach((r) => { if (d === null || r.distance < d) d = r.distance; });
+      }
+      if (d !== null && (!hit || d < hit.distance)) hit = { distance: d };
+    }
     if (!hit || (h && !h.floor && h.t < hit.distance)) return false;
     if (h && h.floor && h.t < hit.distance) return false;
     if (performance.now() - partHintT > 3000) {

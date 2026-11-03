@@ -207,3 +207,11 @@ s'ouvre avec toutes ses commandes (haut / bas / déplacement).
 Une pièce grise garde le maillage du fichier et ne se sculpte pas. Le bouton **Sculpter** de sa ligne (colonne de droite) la fond dans l'argile (voxélisation à la résolution
 courante, couleur choisie, annulable d'un « Oups » qui rend le maillage d'origine) ; « Coller » au placement fait la même chose directement. Toucher une pièce grise avec un outil
 de sculpture n'agit pas derrière elle : un message explique quoi faire.
+
+## Formes de départ simples, résolution, gros imports (v58)
+- **Formes de départ** réécrites : grosses (9 à 13 cm), peu détaillées, faites de sphères, ellipsoïdes, boîtes et cônes **épais** (aucune tige ni tube fin) pour laisser les enfants les transformer ;
+  bases géométriques (boule, œuf, cube, pilier, cône, toit, plaque), animaux debout sur de grosses pattes, objets simples.
+- **Résolution** : le plafond de la grille passe de 160³ à 256³. Par défaut (« Fine », 112 voxels / 10 cm) un plateau de 20 cm donne donc une grille de 223³ (voxel ≈ 0,9 mm, au lieu de 1,26 mm) ;
+  nouveau réglage « Très fine » (256³, ordinateur puissant) et les préréglages / résolutions plus basses restent disponibles dans les Options pour les ordinateurs modestes. Mesures à 223³ :
+  trait ≈ 0,1 ms, annuler ≈ 1 ms, maillage complet ≈ 65 ms, sauvegarde ≈ 0,3 Mo. L'export n'est jamais moins fin que la sculpture.
+- **Import** : jusqu'à **3 000 000 de triangles** (avant 500 000) ; au-delà de 400 000 triangles, pas d'aperçu du booléen et la sélection d'une pièce se fait sur sa boîte englobante.
