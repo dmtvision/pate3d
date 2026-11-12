@@ -4,14 +4,14 @@
    sur le plateau, puis transformé en champ de voxels (le moteur de Pâte3D lui-même) et enregistré de façon compacte.
    Dans l'application, ce champ est rééchantillonné à la résolution courante puis légèrement lissé (« blur », en mm).
 
-   Utilisation :  node tools/build-models.js
-   (les chemins des STL sont ceux de l'ordinateur de l'auteur : à adapter dans MODELS si besoin)
+   Utilisation :  node tools/build-models.js [dossier des STL]
+   (dossier par défaut : modeles-sources/ à la racine du projet, ignoré par git ; ou la variable d'environnement PATE3D_MODELES)
    ========================================================================== */
 'use strict';
 const fs = require('fs');
 const path = require('path');
 
-const SRC = 'E:/Documents/SITES/cours/tuto/';
+const SRC = path.resolve(process.argv[2] || process.env.PATE3D_MODELES || path.join(__dirname, '..', 'modeles-sources')) + path.sep;
 const MODELS = [
   // id (unique), nom affiché, emoji, fichier, rotation autour de la verticale (degrés) pour regarder vers l'avant, taille (plus grande dimension, mm)
   { id: 'atelier-fantome', name: 'Fantôme', emoji: '👻', file: SRC + 'FANTOME-high.stl', rot: 0, size: 100 },

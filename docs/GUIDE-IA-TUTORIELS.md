@@ -26,7 +26,7 @@ Compagnon : [`docs/tuto-helper.js`](tuto-helper.js) — petite aide JavaScript (
 ## 2. Lancer l'application
 
 ```bash
-cd E:\python-playground\clay-3D
+cd chemin/vers/clay-3D
 python -m http.server 8823
 ```
 
