@@ -221,3 +221,9 @@ Après sa construction, chaque forme de départ reçoit un **flou gaussien de 2,
 ellipsoïdes, cônes) disparaissent et tout est arrondi ; les parties plus fines que ~5 mm s'effacent, donc les détails minuscules (nez, antennes, bouts d'oreilles, pointes) ont été supprimés ou épaissis
 (rayons ≥ 8 mm). La rangée du sol suit celle du dessus (pas de rebord au pied), et les normales des parois au contact du plateau ne sont plus faussées par le vide sous le plateau.
 Vérifié : les 37 formes s'exportent étanches (manifold), sans débris.
+
+## Sons, guide pour tutoriels (v63)
+- Les **sons sont coupés par défaut** (`pate3d.sound` doit valoir `'1'` pour les activer, via le bouton Sons).
+- [`docs/GUIDE-IA-TUTORIELS.md`](docs/GUIDE-IA-TUTORIELS.md) : guide pour une IA (ou une personne) qui crée des tutoriels avec captures d'écran — libellés exacts et sélecteurs de
+  toute l'interface, état propre, pièges, recettes testées. [`docs/tuto-helper.js`](docs/tuto-helper.js) : aide `window.T` (nouvelle sculpture, outils, traits simulés, caméra,
+  cadres rouges numérotés, sans son).

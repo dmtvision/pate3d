@@ -2340,7 +2340,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=62');
+        exportWorker = new Worker('js/exportWorker.js?v=63');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }

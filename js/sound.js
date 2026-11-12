@@ -2,8 +2,8 @@
 (function (global) {
   'use strict';
   let ctx = null;
-  let on = true;
-  try { on = localStorage.getItem('pate3d.sound') !== '0'; } catch (e) { /* ignore */ }
+  let on = false;                                   // sons coupés par défaut : on les active avec le bouton « Sons »
+  try { on = localStorage.getItem('pate3d.sound') === '1'; } catch (e) { /* ignore */ }
 
   function ensure() {
     if (!ctx) {
