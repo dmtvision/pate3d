@@ -17,15 +17,45 @@
 
   /* état partagé (déclaré tôt) */
   let tool = 'add', stroke = null, placement = null;
+  const parts = [];                            // pièces importées : maillages originaux, jamais transformés en argile
+  const rs = { on: false, base: null, sx: 1, sy: 1, sz: 1, lock: true, guide: null, warned: false };   // redimensionnement de la sculpture en cours
   let WL = 100, WH = 50;                       // plateau (mm) et sa moitié, lus dans le moteur
   const syncWorld = () => { const g = ClayEngine.grid(); WL = g.L; WH = g.HALF; };
-  const gridSizeFor = (lw, res) => clamp(Math.round(lw / (100 / (res - 1))) + 1, 40, 160);
+  const gridSizeFor = (lw, res) => clamp(Math.round(lw / (100 / (res - 1))) + 1, 40, 256);
+
+  /* ---- options générales (mémorisées sur l'ordinateur : retrouvées à chaque ouverture) ---- */
+  const lowEnd = (navigator.deviceMemory && navigator.deviceMemory <= 2) || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
+  const OPT_V = 3;                                  // version des réglages : la 2 passe à la résolution fine, la 3 au plateau de 20 cm
+  const opts = {
+    res: lowEnd ? 56 : 112, world: 200, display: lowEnd ? 'eco' : 'norm', penMode: 'force', exportQ: 'dense',
+    ui: 1, side: 'left', sideOpen: true, sideOpenP: false, navOpen: true, stampSeries: false,
+    sharp: 1, perf: lowEnd ? 'low' : 'custom', sym: 'x', stamp: 'star', boolPreview: !lowEnd, v: OPT_V
+  };
+  try {
+    const saved = JSON.parse(localStorage.getItem('pate3d.opts') || '{}');
+    if ('eco' in saved && !('display' in saved)) saved.display = saved.eco ? 'eco' : 'norm';
+    if ('pen' in saved && !('penMode' in saved)) saved.penMode = saved.pen ? 'force' : 'off';
+    if ((+saved.v || 0) < OPT_V) { saved.world = 200; if (!lowEnd) { saved.res = 112; saved.perf = 'custom'; } }   // nouveaux réglages par défaut, une seule fois
+    Object.assign(opts, saved);
+  } catch (e) { /* ignore */ }
+  opts.v = OPT_V;
+  opts.boolPreview = !!opts.boolPreview;
+  delete opts.pen;
+  if (['off', 'force', 'size', 'both'].indexOf(opts.penMode) < 0) opts.penMode = 'force';
+  if (![40, 56, 80, 112, 144].includes(+opts.res)) opts.res = lowEnd ? 56 : 112;
+  opts.res = +opts.res;
+  opts.world = Number.isFinite(+opts.world) && +opts.world >= 60 && +opts.world <= 400 ? +opts.world : 200;
+  if (![0.6, 1, 1.4].includes(+opts.sharp)) opts.sharp = 1;
+  opts.sharp = +opts.sharp;
+  if (['off', 'x', 'xz', 'rot6'].indexOf(opts.sym) < 0) opts.sym = 'x';
+  const saveOpts = () => { try { localStorage.setItem('pate3d.opts', JSON.stringify(opts)); } catch (e) { /* ignore */ } };
+  saveOpts();
 
   /* ------------------------------------------------------------------ Rendu */
   const canvas = $('#gl');
   let renderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: (window.devicePixelRatio || 1) < 1.75, alpha: true, powerPreference: 'low-power' });
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: (window.devicePixelRatio || 1) < 1.75 && opts.perf !== 'min', alpha: true, powerPreference: 'low-power' });
   } catch (err) {
     $('#nogl').hidden = false;
     return;
@@ -35,22 +65,6 @@
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(40, 1, 5, 1200);
-
-  /* ---- options générales (mémorisées) ---- */
-  const lowEnd = (navigator.deviceMemory && navigator.deviceMemory <= 2) || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
-  const opts = {
-    res: lowEnd ? 56 : 80, world: 100, display: lowEnd ? 'eco' : 'norm', penMode: 'force', exportQ: 'dense',
-    ui: 1, side: 'left', sideOpen: true, sideOpenP: false, navOpen: true, stampSeries: false
-  };
-  try {
-    const saved = JSON.parse(localStorage.getItem('pate3d.opts') || '{}');
-    if ('eco' in saved && !('display' in saved)) saved.display = saved.eco ? 'eco' : 'norm';
-    if ('pen' in saved && !('penMode' in saved)) saved.penMode = saved.pen ? 'force' : 'off';
-    Object.assign(opts, saved);
-  } catch (e) { /* ignore */ }
-  delete opts.pen;
-  if (['off', 'force', 'size', 'both'].indexOf(opts.penMode) < 0) opts.penMode = 'force';
-  const saveOpts = () => { try { localStorage.setItem('pate3d.opts', JSON.stringify(opts)); } catch (e) { /* ignore */ } };
 
   /* ---- textures procédurales (aucun fichier à charger) ---- */
   /** « Matcap » argile : l'éclairage est cuit dans l'image, donc 1 seule lecture de texture par pixel (très léger) */
@@ -134,6 +148,8 @@
   scene.add(clay.group);
   const clayMatcap = new THREE.MeshMatcapMaterial({ color: 0xe9936b, matcap: matcapTex });
   const clayReal = new THREE.MeshStandardMaterial({ color: 0xe9936b, roughness: 0.72, metalness: 0 });
+  const partMatcap = new THREE.MeshMatcapMaterial({ color: 0xb4c3d6, matcap: matcapTex });
+  const partReal = new THREE.MeshStandardMaterial({ color: 0xb4c3d6, roughness: 0.6, metalness: 0.05 });
 
   /* ---- ombre douce sous la sculpture (empreinte floutée de la base) ---- */
   const SH = 64;
@@ -199,7 +215,7 @@
     shadowDirty = true;
   }
 
-  /* ---- curseur de pinceau : bille translucide + anneau toujours tourné vers l'écran ---- */
+  /* ---- curseur de pinceau : bille translucide + anneau posé sur la surface (orienté selon sa normale) ---- */
   const cursorMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, transparent: true, opacity: 0.2, depthWrite: false });
   const ringMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, transparent: true, opacity: 0.95, depthTest: false, side: THREE.DoubleSide });
   const sphereGeo = new THREE.SphereGeometry(1, 20, 14), ringGeo = new THREE.RingGeometry(0.86, 1, 48);
@@ -259,15 +275,11 @@
       if (q.right - rc.left < w / 2) l = Math.max(l, q.right - rc.left);
       else if (q.left - rc.left > w / 2) r = Math.min(r, q.left - rc.left);
     }
-    const sbar = $('#stamp-bar');                // la barre des tampons (en bas) : la sculpture se recentre au-dessus
-    if (sbar && !sbar.hidden && sbar.offsetParent !== null) {
-      const sq = sbar.getBoundingClientRect();
-      if (sq.top - rc.top > h * 0.4) b = Math.min(b, sq.top - rc.top);
-    }
-    const nav = $('#nav');                       // la carte de navigation ne couvre qu'un coin : on décale la sculpture de moitié
-    if (!portrait && nav && nav.offsetParent !== null) {
-      const nr = nav.getBoundingClientRect().right - rc.left;
-      if (nr > l && nr < w / 2 + 0.2 * w) l += 0.5 * (nr - l);
+    for (const sbar of [$('#stamp-bar'), $('#brush-bar')]) {   // barres du bas (tampons, pinceaux) : la sculpture se recentre au-dessus
+      if (sbar && !sbar.hidden && sbar.offsetParent !== null) {
+        const sq = sbar.getBoundingClientRect();
+        if (sq.top - rc.top > h * 0.4) b = Math.min(b, sq.top - rc.top);
+      }
     }
     const dx = (l + r) / 2 - w / 2, dy = (t + b) / 2 - h / 2;
     freeC.x = (l + r) / 2; freeC.y = (t + b) / 2;
@@ -293,7 +305,10 @@
   // résolution adaptative : si l'appareil rame, on baisse la netteté, puis on la remonte quand ça va mieux
   const PR_MIN = 0.75;
   let prBase = 1, pr = 1, ema = 16, goodFrames = 0, lastNow = 0, lastPr = 0;
-  function basePixelRatio() { return opts.display === 'eco' ? 1 : Math.min(window.devicePixelRatio || 1, 1.5); }
+  function basePixelRatio() {
+    const dpr = Math.max(window.devicePixelRatio || 1, 1), cap = opts.display === 'eco' ? 1 : 1.5;
+    return clamp(Math.min(dpr, cap) * (opts.sharp || 1), 0.5, dpr * 1.5);
+  }
   function setPixelRatio(v, now) {
     pr = v; lastPr = now || 0; ema = 16; goodFrames = 0;
     renderer.setPixelRatio(pr);
@@ -333,7 +348,7 @@
       else if (now - shadowT > 120) { shadowT = now; shadowDirty = false; updateShadow(); }
       else setTimeout(invalidate, 130);
     }
-    for (const cu of cursors) if (cu.visible) cu.children[1].quaternion.copy(camera.quaternion);
+    for (const cu of cursors) if (cu.visible && !cu.userData.n) cu.children[1].quaternion.copy(camera.quaternion);
     renderer.render(scene, camera);
     const key = view.az.toFixed(4) + view.el.toFixed(4) + gizmo.width;
     if (key !== gizmoKey) { gizmoKey = key; drawGizmo(); }
@@ -366,10 +381,15 @@
 
   /* taille (rayon, mm) et force (0-1) propres à chaque outil */
   const toolSet = {};
-  ['add', 'remove', 'pull', 'stretch', 'flatten', 'smooth', 'stamp'].forEach((t) => { toolSet[t] = { size: t === 'stretch' || t === 'stamp' ? 8 : 7, force: 0.5 }; });
+  const DEF_FORCE = { add: 0.3, remove: 0.3, pull: 0.3, stretch: 0.35, flatten: 0.35, smooth: 0.35, stamp: 0.3, layer: 0.3, inflate: 0.2, pinch: 0.3, nudge: 0.35, groove: 0.3, fill: 0.3, paint: 0.5 };
+  Object.keys(DEF_FORCE).forEach((t) => {
+    toolSet[t] = { size: ['stretch', 'stamp', 'layer', 'nudge'].includes(t) ? 8 : 7, force: DEF_FORCE[t] };
+  });
   try {
     const sv = JSON.parse(localStorage.getItem('pate3d.tools') || '{}');
-    Object.keys(toolSet).forEach((t) => { if (sv[t]) Object.assign(toolSet[t], sv[t]); });
+    const newForces = localStorage.getItem('pate3d.toolsv') === '2';          // v2 : forces par défaut plus douces (réglages anciens : forces remises une fois)
+    Object.keys(toolSet).forEach((t) => { if (sv[t]) { if (!newForces) delete sv[t].force; Object.assign(toolSet[t], sv[t]); } });
+    localStorage.setItem('pate3d.toolsv', '2');
   } catch (e) { /* ignore */ }
   const saveTools = () => { try { localStorage.setItem('pate3d.tools', JSON.stringify(toolSet)); } catch (e) { /* ignore */ } };
   const setOf = (t) => toolSet[t] || toolSet.add;
@@ -390,18 +410,81 @@
   const F = (t) => clamp(setOf(t).force * curForceMul, 0.05, 1);
   const brushR = (t) => setOf(t || (stroke ? stroke.tool : tool)).size * curPressure;
 
-  const CURSOR_COLORS = { add: 0x22c55e, remove: 0xef4444, pull: 0x3b82f6, smooth: 0xeab308, stamp: 0xf97316, stretch: 0x06b6d4, flatten: 0x84cc16, orbit: 0x000000 };
-  const TOOL_INFO = {
-    add: ['Ajouter', 'Pose de la matière : touche et glisse. La force règle l’épaisseur.', '#22c55e', '#e4f7ea', '#15803d'],
-    remove: ['Enlever', 'Gratte et creuse la matière.', '#ef4444', '#fde9e9', '#b91c1c'],
-    stretch: ['Étirer', 'Attrape et tire la pâte : elle suit ton doigt.', '#06b6d4', '#dff6fb', '#0e7490'],
-    pull: ['Tirer', 'Fait sortir une pointe, une corne, une queue.', '#3b82f6', '#e6effe', '#1d4ed8'],
-    smooth: ['Lisser', 'Arrondit et adoucit les bosses.', '#eab308', '#fdf5d6', '#a16207'],
-    flatten: ['Aplatir', 'Rabote pour obtenir une surface plate.', '#84cc16', '#eef8d9', '#4d7c0f'],
-    stamp: ['Tampon', 'Touche pour coller. Reste appuyé et glisse pour choisir la taille.', '#f97316', '#feebdc', '#c2410c'],
-    orbit: ['Tourner', 'Glisse pour faire le tour de ta sculpture.', '#8b5cf6', '#ede8fe', '#6d28d9']
+  const CURSOR_COLORS = {
+    add: 0x22c55e, remove: 0xef4444, pull: 0x3b82f6, smooth: 0xeab308, stamp: 0xf97316, stretch: 0x06b6d4, flatten: 0x84cc16,
+    layer: 0xd97706, inflate: 0xec4899, pinch: 0x8b5cf6, nudge: 0x0ea5e9, groove: 0x64748b, fill: 0x14b8a6, paint: 0xe11d48, orbit: 0x000000
   };
-  const TOOL_KEYS = ['add', 'remove', 'stretch', 'pull', 'smooth', 'flatten', 'stamp', 'orbit'];
+  const TOOL_INFO = {
+    add: ['Ajouter', 'pose de la matière, la force règle l’épaisseur. Ctrl : enlever. Les autres pinceaux sont en bas.'],
+    remove: ['Enlever', 'gratte et creuse la matière. Ctrl : ajouter. Les autres pinceaux sont en bas.'],
+    stretch: ['Élastique', 'attrape la pâte et tire-la comme un élastique : elle suit ton doigt, même très loin.'],
+    pull: ['Tirer', 'fait sortir une pointe, une corne, une queue.'],
+    smooth: ['Lisser', 'arrondit et adoucit les bosses. Astuce : maintiens Maj avec n’importe quel outil.'],
+    flatten: ['Aplatir', 'rabote pour obtenir une surface plate.'],
+    stamp: ['Tampon', 'touche pour coller. Reste appuyé et glisse pour choisir la taille.'],
+    layer: ['Brosse', 'peint une fine couche d’argile bien régulière. Ctrl : sillon.'],
+    inflate: ['Gonfler', 'gonfle la surface comme un ballon. Ctrl : dégonfler.'],
+    pinch: ['Pincer', 'pince la matière pour faire une arête ou un pli. Ctrl : écarter.'],
+    nudge: ['Pousser', 'pousse la matière dans le sens de ton geste. Ctrl : à l’envers.'],
+    groove: ['Sillon', 'trace un sillon fin pour dessiner des lignes et des plis. Ctrl : brosse.'],
+    fill: ['Combler', 'remplit les trous et les creux sans toucher aux bosses.'],
+    paint: ['Peindre', 'colore la surface avec la couleur choisie, sans changer la forme. Ctrl : remet la terre cuite.']
+  };
+  /* pinceaux supplémentaires (menu en bas de l'écran) */
+  /* menu des pinceaux (en bas) : il apparaît dès qu'on choisit Ajouter ou Enlever. Deux groupes : poser / retirer, puis déformer. */
+  const BRUSH_GROUPS = [
+    [
+      { id: 'add', icon: 'i-add', c: '#22c55e', cs: '#e4f7ea', cd: '#15803d' },
+      { id: 'remove', icon: 'i-remove', c: '#ef4444', cs: '#fde9e9', cd: '#b91c1c' },
+      { id: 'layer', icon: 'i-layer', c: '#d97706', cs: '#fdeccf', cd: '#b45309' },
+      { id: 'groove', icon: 'i-groove', c: '#64748b', cs: '#e5ebf3', cd: '#3b4d68' }
+    ], [
+      { id: 'inflate', icon: 'i-inflate', c: '#ec4899', cs: '#fde6f2', cd: '#be185d' },
+      { id: 'pinch', icon: 'i-pinch', c: '#8b5cf6', cs: '#ede8fe', cd: '#6d28d9' },
+      { id: 'nudge', icon: 'i-nudge', c: '#0ea5e9', cs: '#dff1fb', cd: '#0369a1' },
+      { id: 'fill', icon: 'i-fill', c: '#14b8a6', cs: '#d7f5ef', cd: '#0f766e' }
+    ]
+  ];
+  const BRUSH_IDS = BRUSH_GROUPS.flat().map((b) => b.id);
+  /* le bouton de gauche (Ajouter / Enlever) reste allumé quand on prend un pinceau de sa famille */
+  const FAMILY = { add: ['add', 'layer', 'inflate', 'pinch', 'nudge', 'fill'], remove: ['remove', 'groove'] };
+  const TOOL_KEYS = ['add', 'remove', 'stretch', 'pull', 'smooth', 'flatten', 'stamp', 'paint'];
+  const brushBar = $('#brush-bar');
+  const BRUSH_CAPS = ['Poser et retirer', 'Déformer'];
+  BRUSH_GROUPS.forEach((grp, gi) => {
+    if (gi) { const sep = document.createElement('i'); sep.className = 'brush-sep'; sep.setAttribute('aria-hidden', 'true'); brushBar.appendChild(sep); }
+    const box = document.createElement('div'), row = document.createElement('div'), cap = document.createElement('small');
+    box.className = 'brush-grp'; row.className = 'brush-row'; cap.className = 'brush-cap'; cap.textContent = BRUSH_CAPS[gi];
+    box.appendChild(cap); box.appendChild(row); brushBar.appendChild(box);
+    grp.forEach((b) => {
+      const el = document.createElement('button');
+      el.className = 'brush-btn'; el.dataset.brush = b.id;
+      el.style.setProperty('--c', b.c); el.style.setProperty('--cs', b.cs); el.style.setProperty('--cd', b.cd);
+      el.title = TOOL_INFO[b.id][0] + ' : ' + TOOL_INFO[b.id][1];
+      el.innerHTML = '<svg class="ic"><use href="#' + b.icon + '"/></svg><span>' + TOOL_INFO[b.id][0] + '</span>';
+      el.addEventListener('click', () => setTool(b.id));
+      row.appendChild(el);
+    });
+  });
+  let brushBarOpen = false;
+
+  /* modificateurs au clavier : Maj = lisser, Ctrl = faire l'inverse (ajouter ↔ enlever…), Alt + glisser = déplacer la vue,
+     Espace + glisser = tourner la vue */
+  const keyMods = { shift: false, ctrl: false, alt: false };
+  let spaceDown = false;
+  const readMods = (e) => ({ shift: !!e.shiftKey, ctrl: !!(e.ctrlKey || e.metaKey), alt: !!e.altKey });
+  const INVERSE = { add: 'remove', remove: 'add', layer: 'groove', groove: 'layer' };
+  /** Outil réellement utilisé : tient compte de Maj (lisser) et de Ctrl (inverse) ; inv = variante « à l'envers » (dégonfler, écarter…) */
+  function resolveTool(base, m) {
+    if (m && m.shift && base !== 'smooth') return { tool: 'smooth', inv: false };
+    if (m && m.ctrl) return INVERSE[base] ? { tool: INVERSE[base], inv: false } : { tool: base, inv: true };
+    return { tool: base, inv: false };
+  }
+  function syncToolHighlight() {
+    const shown = resolveTool(tool, keyMods).tool;
+    $$('.tool[data-tool]').forEach((b) => b.classList.toggle('active', (FAMILY[b.dataset.tool] || [b.dataset.tool]).includes(shown)));
+    $$('.brush-btn').forEach((b) => b.classList.toggle('active', b.dataset.brush === shown));
+  }
 
   let hintTimer = 0;
   function setHint(txt) {
@@ -419,29 +502,48 @@
     toastTimer = setTimeout(() => { t.hidden = true; }, 3200);
   }
 
+  let cursorColorTool = '';
+  function setCursorColor(t) {
+    if (cursorColorTool === t) return;
+    cursorColorTool = t;
+    const c = CURSOR_COLORS[t] || 0x22c55e;
+    cursorMat.color.setHex(c); ringMat.color.setHex(c);
+  }
   function setTool(name) {
     if (stroke) endStroke();
     tool = name;
     const ti = TOOL_INFO[name];
-    if (ti) {
-      $('#ti-name').textContent = ti[0]; $('#ti-desc').textContent = ti[1];
-      const card = $('#tool-info');
-      card.style.setProperty('--c', ti[2]); card.style.setProperty('--cs', ti[3]); card.style.setProperty('--cd', ti[4]);
-      $('#ti-use').setAttribute('href', '#i-' + name);
-    }
-    $$('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === name));
-    cursorMat.color.setHex(CURSOR_COLORS[name]); ringMat.color.setHex(CURSOR_COLORS[name]);
+    if (ti) setHint(ti[0] + ' : ' + ti[1]);
+    brushBarOpen = BRUSH_IDS.includes(name);
+    setCursorColor(name);
     cursors.forEach((c) => { c.visible = false; });
     hideStampGhost(); hideSizeTip();
     $('#stamp-bar').hidden = name !== 'stamp' || !!placement;
+    brushBar.hidden = !brushBarOpen || !!placement;
+    syncToolHighlight();
     syncBrushUI();
     updateViewOffset();
     invalidate();
   }
-  $$('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  $$('.tool[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
   const SIZE_PRESETS = [4, 7, 12];
+  const TOOL_LOOK = {
+    add: ['i-add', '#22c55e', '#e4f7ea', '#15803d'], remove: ['i-remove', '#ef4444', '#fde9e9', '#b91c1c'],
+    stretch: ['i-stretch', '#06b6d4', '#dff6fb', '#0e7490'], pull: ['i-pull', '#3b82f6', '#e6effe', '#1d4ed8'],
+    smooth: ['i-smooth', '#eab308', '#fdf5d6', '#a16207'], flatten: ['i-flatten', '#84cc16', '#eef8d9', '#4d7c0f'],
+    stamp: ['i-stamp', '#f97316', '#feebdc', '#c2410c'], paint: ['i-paint', '#e11d48', '#fde4ea', '#9f1239']
+  };
+  BRUSH_GROUPS.flat().forEach((b) => { if (!TOOL_LOOK[b.id]) TOOL_LOOK[b.id] = [b.icon, b.c, b.cs, b.cd]; });
+  const COLOR_TOOLS = new Set(['add', 'layer', 'stamp', 'pull', 'paint']);        // les outils qui posent de la matière ou peignent
   function syncBrushUI() {
+    const look = TOOL_LOOK[tool], chip = $('#side-tool');
+    if (look) {
+      chip.style.setProperty('--c', look[1]); chip.style.setProperty('--cs', look[2]); chip.style.setProperty('--cd', look[3]);
+      $('#side-tool-ic').setAttribute('href', '#' + look[0]);
+      $('#side-tool-name').textContent = (TOOL_INFO[tool] || [tool])[0];
+    }
+    $('#sec-color').classList.toggle('muted', !COLOR_TOOLS.has(tool));
     const on = tool !== 'orbit';
     const st = setOf(tool);
     $('#brush-size').disabled = $('#brush-force').disabled = !on;
@@ -459,37 +561,68 @@
   $('#brush-size').addEventListener('input', (e) => { if (tool !== 'orbit') { setOf(tool).size = +e.target.value; saveTools(); syncBrushUI(); } });
   $('#brush-force').addEventListener('input', (e) => { if (tool !== 'orbit') { setOf(tool).force = +e.target.value / 100; saveTools(); syncBrushUI(); } });
 
+  const SYM_ORDER = ['off', 'x', 'xz', 'rot6'];
   function setSym(m, announce) {
     sym = m;
     $('#btn-mirror').classList.toggle('on', m !== 'off');
     $('#sym-label').textContent = SYMS[m].label;
+    $('#sym-use').setAttribute('href', '#i-sym' + SYM_ORDER.indexOf(m));      // l'icône montre la symétrie choisie
     mirrorPlane.visible = SYMS[m].planes.includes(0);
     mirrorPlane2.visible = SYMS[m].planes.includes(1);
+    if (opts.sym !== m) { opts.sym = m; saveOpts(); }
     if (announce) setHint(m === 'off' ? 'Symétrie coupée : chaque geste ne se fait qu’une fois.' : 'Symétrie « ' + SYMS[m].label + ' » : ce que tu fais d’un côté se répète !');
     invalidate();
   }
-  $('#btn-mirror').addEventListener('click', () => {
-    const order = ['off', 'x', 'xz', 'rot6'];
-    setSym(order[(order.indexOf(sym) + 1) % order.length], true);
-  });
+  const cycleSym = () => setSym(SYM_ORDER[(SYM_ORDER.indexOf(sym) + 1) % SYM_ORDER.length], true);
+  $('#btn-mirror').addEventListener('click', cycleSym);
 
-  /* couleurs (purement décoratives) */
-  const COLORS = [0xf2a679, 0x7cb7ff, 0x6ee7a0, 0xf78fc0, 0xfde047, 0xfaf9f7, 0xb8a2fb, 0x4ee3cf];
+  /* couleurs : les outils qui posent de la matière (Ajouter, Brosse, Tampon, Tirer, formes) et « Peindre » utilisent la couleur choisie ;
+     chaque morceau de la sculpture garde sa couleur. Le « + » ajoute une couleur de ton choix à la palette. */
   const COLOR_NAMES = ['terre cuite', 'bleu', 'vert', 'rose', 'jaune', 'blanc', 'violet', 'turquoise'];
+  const PAL_MAX = 40;
   const colorBox = $('#colors');
-  COLORS.forEach((c, i) => {
-    const b = document.createElement('button');
-    b.className = 'swatch';
-    b.style.setProperty('--c', '#' + c.toString(16).padStart(6, '0'));
-    b.setAttribute('aria-label', 'Couleur ' + COLOR_NAMES[i]);
-    b.title = COLOR_NAMES[i];
-    b.addEventListener('click', () => pickColor(i));
-    colorBox.appendChild(b);
-  });
+  const hex6 = (c) => '#' + c.toString(16).padStart(6, '0');
+  try {
+    const pl = JSON.parse(localStorage.getItem('pate3d.palette') || 'null');
+    if (Array.isArray(pl) && pl.length >= 8 && pl.every((c) => Number.isInteger(c) && c >= 0 && c <= 0xffffff)) clay.setPalette(pl.slice(0, PAL_MAX));
+  } catch (e) { /* ignore */ }
+  const savePalette = () => { try { localStorage.setItem('pate3d.palette', JSON.stringify(clay.pal)); } catch (e) { /* ignore */ } };
+  function renderPalette() {
+    colorBox.textContent = '';
+    clay.pal.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.className = 'swatch' + (i === clay.paint ? ' active' : '');
+      b.style.setProperty('--c', hex6(c));
+      b.setAttribute('aria-label', 'Couleur ' + (COLOR_NAMES[i] || (i + 1)));
+      b.title = COLOR_NAMES[i] || 'Couleur ' + (i + 1);
+      b.addEventListener('click', () => pickColor(i));
+      colorBox.appendChild(b);
+    });
+    const add = document.createElement('label');
+    add.className = 'swatch add'; add.title = 'Ajouter une couleur de ton choix';
+    add.innerHTML = '<svg class="ic"><use href="#i-plus"/></svg><input type="color" aria-label="Ajouter une couleur" value="' + hex6(clay.pal[clay.paint] || 0xf2a679) + '">';
+    add.querySelector('input').addEventListener('change', (e) => addColor(parseInt(String(e.target.value).slice(1), 16)));
+    colorBox.appendChild(add);
+  }
+  function addColor(c) {
+    if (!(c >= 0 && c <= 0xffffff)) return;
+    let i = clay.pal.indexOf(c);
+    if (i < 0) {
+      if (clay.pal.length >= PAL_MAX) { toast('La palette est pleine (' + PAL_MAX + ' couleurs)'); return; }
+      clay.setPalette(clay.pal.concat([c]));
+      i = clay.pal.length - 1;
+      savePalette();
+    }
+    renderPalette();
+    pickColor(i);
+    scheduleSave();                       // la palette est enregistrée avec la sculpture
+  }
   function pickColor(i) {
-    clay.setColor(COLORS[i]);
-    Array.from(colorBox.children).forEach((x, n) => x.classList.toggle('active', n === i));
+    i = clamp(i, 0, clay.pal.length - 1);
+    clay.paint = i;
+    Array.from(colorBox.querySelectorAll('.swatch:not(.add)')).forEach((x, n) => x.classList.toggle('active', n === i));
     try { localStorage.setItem('pate3d.color', String(i)); } catch (e) { /* ignore */ }
+    CURSOR_COLORS.paint = clay.pal[i]; cursorColorTool = ''; setCursorColor(tool);     // le curseur de « Peindre » a la couleur choisie
     invalidate();
   }
 
@@ -501,6 +634,7 @@
   }
   function pushUndo(entry) {
     if (!entry) return;
+    scheduleDims();
     undoStack.push(entry);
     if (undoStack.length > 25) undoStack.shift();
     redoStack.length = 0;
@@ -508,47 +642,101 @@
     scheduleSave();
   }
   function undo() {
+    cancelResize();
     endStroke();
+    clearPreview();
     const e = undoStack.pop();
+    schedulePreview();
     if (!e) return;
-    clay.undoEntry(e); redoStack.push(e); Sfx.undo();
+    if (e.partOp) applyPartOp(e, true); else clay.undoEntry(e);
+    redoStack.push(e); Sfx.undo();
     refreshUndo(); scheduleSave(); invalidate();
   }
   function redo() {
+    cancelResize();
     endStroke();
+    clearPreview();
     const e = redoStack.pop();
+    schedulePreview();
     if (!e) return;
-    clay.redoEntry(e); undoStack.push(e); Sfx.undo();
+    if (e.partOp) applyPartOp(e, false); else clay.redoEntry(e);
+    undoStack.push(e); Sfx.undo();
     refreshUndo(); scheduleSave(); invalidate();
   }
   $('#btn-undo').addEventListener('click', undo);
   $('#btn-redo').addEventListener('click', redo);
 
   const modalOpen = () => $$('.modal').some((m) => !m.hidden && m.id !== 'nogl');
+  const isTyping = (t) => !!t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '');
+  let lastHover = null;
+  function refreshHover() {
+    if (lastHover && !stroke && !placement) {
+      hoverEvt = Object.assign({}, lastHover, { shiftKey: keyMods.shift, ctrlKey: keyMods.ctrl, altKey: keyMods.alt });
+      invalidate();
+    }
+  }
+  function setMods(e) {
+    const m = readMods(e);
+    if (m.shift !== keyMods.shift || m.ctrl !== keyMods.ctrl || m.alt !== keyMods.alt) {
+      Object.assign(keyMods, m);
+      syncToolHighlight();
+      refreshHover();
+    }
+  }
+  /* caméra au clavier : flèches ou Q Z S D (comme les boutons de rotation) ; avec Maj on déplace la vue */
+  const CAM_KEYS = { ArrowLeft: [1, 0], q: [1, 0], ArrowRight: [-1, 0], d: [-1, 0], ArrowUp: [0, 1], z: [0, 1], ArrowDown: [0, -1], s: [0, -1] };
   window.addEventListener('keydown', (e) => {
-    const typing = /TEXTAREA/.test((e.target || {}).tagName || '') || ((e.target || {}).type === 'text');
-    if (typing) return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    setMods(e);
+    if (e.key === 'Alt') e.preventDefault();                      // Alt seul ne doit pas activer le menu du navigateur
     if (e.key === 'Escape') { if (modalOpen()) closeModals(); else if (placement) cancelPlacement(); return; }
-    if (e.key === 'Enter' && placement && !modalOpen() && !/BUTTON|INPUT/.test((e.target || {}).tagName || '')) { validatePlacement(); return; }
+    if (isTyping(e.target)) return;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if ((e.ctrlKey || e.metaKey) && key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && key === 'y') { e.preventDefault(); redo(); return; }
+    if ((e.ctrlKey || e.metaKey) && key === 's') { e.preventDefault(); saveProject(); return; }
+    if (e.code === 'Space' || key === ' ') { if (!modalOpen()) { e.preventDefault(); spaceDown = true; hideCursor(); } return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (key === 'Enter' && placement && !modalOpen() && !/BUTTON|INPUT/.test((e.target || {}).tagName || '')) { validatePlacement(); return; }
     if (modalOpen()) return;
-    if (/^[1-8]$/.test(e.key)) { setTool(TOOL_KEYS[+e.key - 1]); return; }
-    if (e.key === '+' || e.key === '=') { goTo({ dist: view.dist * 0.85 }); return; }
-    if (e.key === '-' || e.key === '_') { goTo({ dist: view.dist / 0.85 }); return; }
-    if ((e.key === '[' || e.key === ']') && tool !== 'orbit') {
+    if (/^[1-8]$/.test(key)) { setTool(TOOL_KEYS[+key - 1]); return; }
+    if (key === '+' || key === '=' || key === 'PageUp') { goTo({ dist: view.dist * 0.85 }); return; }
+    if (key === '-' || key === '_' || key === 'PageDown') { goTo({ dist: view.dist / 0.85 }); return; }
+    if (key === 'h') { goTo(Object.assign(defaultView(), { az: nearestAngle(view.az, 0) })); return; }
+    if (key === 'x') { cycleSym(); return; }
+    if (key === 'f') { if (!placement) openShapes(); return; }
+    const cm = CAM_KEYS[key];
+    if (cm) {
+      e.preventDefault();
+      if (e.shiftKey) { pan(-cm[0] * 30, -cm[1] * 30); invalidate(); }
+      else goTo({ az: view.az + cm[0] * 0.12, el: view.el + cm[1] * 0.08 });
+      return;
+    }
+    if ((key === '[' || key === ']') && tool !== 'orbit') {
       const st = setOf(tool);
-      st.size = clamp(st.size + (e.key === ']' ? 1 : -1), 2, 25);
+      st.size = clamp(st.size + (key === ']' ? 1 : -1), 2, 25);
       saveTools(); syncBrushUI();
     }
   });
+  window.addEventListener('keyup', (e) => {
+    setMods(e);
+    if (e.key === 'Alt') e.preventDefault();
+    if (e.code === 'Space' || e.key === ' ') spaceDown = false;
+  });
+  window.addEventListener('blur', () => { keyMods.shift = keyMods.ctrl = keyMods.alt = false; spaceDown = false; syncToolHighlight(); });
+  // les boutons et curseurs ne gardent pas le focus après un clic : Espace, flèches et Entrée restent pour la caméra et les gestes
+  document.addEventListener('click', (e) => { const b = e.detail && e.target.closest ? e.target.closest('button') : null; if (b) b.blur(); });
+  document.addEventListener('pointerup', (e) => { const t = e.target; if (t && t.tagName === 'INPUT' && t.type === 'range') setTimeout(() => t.blur(), 0); });
 
   /* sauvegarde automatique (aussi quand on quitte la page) */
-  let saveTimer = 0;
+  let saveTimer = 0, saveWarned = false;
   function saveNow() {
     clearTimeout(saveTimer); saveTimer = 0;
-    try { localStorage.setItem('pate3d.v3', clay.serialize()); } catch (e) { /* quota / mode privé */ }
+    const hadPreview = !!pvEntry;
+    if (hadPreview) clearPreview();                       // on n'enregistre jamais l'aperçu
+    try { localStorage.setItem('pate3d.v3', clay.serialize()); } catch (e) {
+      if (!saveWarned) { saveWarned = true; toast('Sauvegarde automatique impossible (espace plein ?) : exporte ton travail !'); }
+    }
+    if (hadPreview) schedulePreview();
   }
   function scheduleSave() {
     clearTimeout(saveTimer);
@@ -600,11 +788,11 @@
   const worldPerPx = (depth) => (2 * depth * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(canvas.clientHeight, 1);
 
   /* ------------------------------------------------------------------ Sculpture */
-  /** n = normale de la surface visée : l'ajout « propre » ne dépose de la matière que sur de l'argile existante
-   *  (rien derrière une partie fine, au-delà d'un bord, ni dans le vide pour les copies de la symétrie). */
-  function capsuleM(a, b, r, mode, hit) {
+  /** hit = point visé (avec sa normale) : l'ajout « propre » ne dépose de la matière que sur de l'argile existante
+   *  (rien derrière une partie fine, au-delà d'un bord, ni dans le vide pour les copies de la symétrie). k = épaisseur visée. */
+  function capsuleM(a, b, r, mode, hit, k) {
     const sup = hit && mode === 'add'
-      ? { nx: 0, ny: 0, nz: 0, depth: r * (addHeightK() + 0.45) + 1.5, below: 0.6 * r + 1.5, w0: hit.x * hit.nx + hit.y * hit.ny + hit.z * hit.nz }
+      ? { nx: 0, ny: 0, nz: 0, depth: r * ((k === undefined ? addHeightK() : k) + 0.45) + 1.5, below: 0.6 * r + 1.5, w0: hit.x * hit.nx + hit.y * hit.ny + hit.z * hit.nz }
       : null;
     for (const M of xfs()) {
       const pa = ap(M, a), pb = ap(M, b);
@@ -612,18 +800,38 @@
       clay.capsule(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], r, mode, sup);
     }
   }
-  function smoothM(c, r) {
-    const k = 0.15 + 0.8 * F('smooth');
-    for (const M of xfs()) { const q = ap(M, c); clay.smooth(q[0], q[1], q[2], r, k); }
+  function smoothM(c, r, fillOnly) {
+    const k = 0.15 + 0.8 * F(fillOnly ? 'fill' : 'smooth');
+    for (const M of xfs()) { const q = ap(M, c); clay.smooth(q[0], q[1], q[2], r, k, fillOnly); }
   }
-  function showCursor(c, r) {
+  function inflateM(c, r, amount) {
+    for (const M of xfs()) { const q = ap(M, c); clay.inflate(q[0], q[1], q[2], r, amount); }
+  }
+  function paintM(c, r, idx) {
+    for (const M of xfs()) { const q = ap(M, c); clay.paintAt(q[0], q[1], q[2], r, idx); }
+  }
+  function pinchM(c, n, r, alpha) {
+    for (const M of xfs()) { const q = ap(M, c), m = ap(M, n); clay.warpPinch(q[0], q[1], q[2], m[0], m[1], m[2], r, alpha); }
+  }
+  function grabM(c, d, r, gain) {
+    const m = gain === undefined ? 0.6 + 0.8 * F('stretch') : gain;
+    for (const M of xfs()) { const pc = ap(M, c), pd = ap(M, d); clay.warpGrab(pc[0], pc[1], pc[2], pd[0] * m, pd[1] * m, pd[2] * m, r); }
+  }
+  /** Curseur : bille translucide au centre du pinceau + anneau posé sur la surface (orienté selon sa normale n) :
+   *  ring = {p: point de contact, r: rayon de l'empreinte}. */
+  const Z_AXIS = new THREE.Vector3(0, 0, 1), nTmp = new THREE.Vector3();
+  function showCursor(c, r, n, ring) {
     const xs = xfs();
     for (let i = 0; i < cursors.length; i++) {
       const cu = cursors[i];
       if (i < xs.length && tool !== 'orbit') {
-        const q = ap(xs[i], c);
+        const q = ap(xs[i], c), rg = cu.children[1];
         cu.position.set(q[0], q[1], q[2]);
         cu.scale.setScalar(r);
+        if (ring) { const qp = ap(xs[i], ring.p); rg.position.set((qp[0] - q[0]) / r, (qp[1] - q[1]) / r, (qp[2] - q[2]) / r); rg.scale.setScalar(ring.r / r); }
+        else { rg.position.set(0, 0, 0); rg.scale.setScalar(1); }
+        if (n) { const m = ap(xs[i], n); nTmp.set(m[0], m[1], m[2]).normalize(); rg.quaternion.setFromUnitVectors(Z_AXIS, nTmp); cu.userData.n = true; }
+        else cu.userData.n = false;
         cu.visible = true;
       } else cu.visible = false;
     }
@@ -635,7 +843,11 @@
     if (any) invalidate();
   }
 
-  const allowed = (h, t) => !!h && h.c >= MIN_C && ((t || tool) === 'add' || (t || tool) === 'stamp' || !h.floor);
+  /* outils qui peuvent aussi travailler sur le plateau / qui visent la surface en cours de déformation / sans lissage final */
+  const FLOOR_OK = new Set(['add', 'layer', 'stamp']);
+  const ON_CURRENT = new Set(['smooth', 'fill', 'pinch', 'nudge', 'paint']);
+  const NO_RELAX = new Set(['smooth', 'fill', 'stretch', 'pinch', 'nudge', 'inflate', 'paint']);
+  const allowed = (h, t) => !!h && h.c >= MIN_C && (FLOOR_OK.has(t || tool) || !h.floor);
 
   /* --- tampons --- */
   const STAMPS = ['sphere', 'cube', 'cone', 'heart', 'star', 'flower', 'paw', 'moon', 'drop', 'diamond', 'torus'];
@@ -751,10 +963,11 @@
     return Math.hypot(h.x - prev.x, h.y - prev.y, h.z - prev.z) <= 4 * mv + 1.5 * ClayEngine.grid().H;
   }
 
-  function beginStroke(h, forced, e) {
+  function beginStroke(h, rt, e) {
+    commitResize();
     clay.beginEdit();
-    const t = forced || tool;
-    stroke = { tool: t, born: performance.now(), onFloor: !!h.floor, last: null, path: 0, t0: h.t, prevHit: h, span: Math.max(0.8 * WL, 8 * Math.max(brushR(t), 2)), lastPx: e ? [e.clientX, e.clientY] : null, lastT: e ? e.timeStamp : 0 };
+    const t = rt.tool;
+    stroke = { tool: t, inv: rt.inv, born: performance.now(), onFloor: !!h.floor, last: null, path: 0, t0: h.t, prevHit: h, span: Math.max(0.8 * WL, 8 * Math.max(brushR(t), 2)), lastPx: e ? [e.clientX, e.clientY] : null, lastT: e ? e.timeStamp : 0 };
     if (t === 'stamp') {
       if (opts.stampSeries) { const sz = stampSizeDefault(); stampPlace(h, sz); stroke.lastStamp = [h.x, h.y, h.z]; showStampGhost(h, sz); return; }
       stroke.stamp = { h, sx: e ? e.clientX : 0, sy: e ? e.clientY : 0, size: stampSizeDefault(), moved: false };
@@ -798,10 +1011,6 @@
     }
   }
 
-  function grabM(c, d, r) {
-    const m = 0.6 + 0.8 * F('stretch');
-    for (const M of xfs()) { const pc = ap(M, c), pd = ap(M, d); clay.grab(pc[0], pc[1], pc[2], pd[0] * m, pd[1] * m, pd[2] * m, r); }
-  }
   function flattenM(c, pl, r) {
     for (const M of xfs()) {
       const pc = ap(M, c), pp = ap(M, [pl[0], pl[1], pl[2]]), pn = ap(M, [pl[3], pl[4], pl[5]]);
@@ -817,39 +1026,87 @@
       for (let i = 1; i <= n; i++) flattenM([l[0] + dx * i / n, l[1] + dy * i / n, l[2] + dz * i / n], stroke.plane, R);
     }
     stroke.last = c;
-    showCursor(c, R);
+    showCursor(c, R, [h.nx, h.ny, h.nz]);
   }
 
   /* Épaisseur ajoutée / profondeur creusée par un geste (en fraction du rayon du pinceau) : la force part vraiment de « très léger ».
    * Le centre de la bille est posé sous (ajout) ou au-dessus (creusage) de la surface pour obtenir cette épaisseur. */
   const addHeightK = () => lerp(0.1, 1.15, F('add'));
+  const layerHeightK = () => lerp(0.05, 0.3, F('layer'));
   const removeDepthK = () => lerp(0.12, 1.15, F('remove'));
-  const addOff = () => addHeightK() - 1;
-  const removeOff = () => 1 - removeDepthK();
+  const grooveDepthK = () => lerp(0.3, 1.0, F('groove'));
+  const footprint = (R, k) => R * Math.sqrt(Math.max(0.12, 1 - Math.pow(1 - Math.min(k, 1), 2)));
+  /** Rayon d'action R, décalage du centre le long de la normale (en fraction de R) et rayon de l'empreinte sur la surface pour l'outil t */
+  function brushGeom(t) {
+    const R = brushR(t);
+    switch (t) {
+      case 'add': { const k = addHeightK(); return { R, off: k - 1, fr: footprint(R, k) }; }
+      case 'layer': { const k = layerHeightK(); return { R, off: k - 1, fr: footprint(R, k) }; }
+      case 'remove': { const k = removeDepthK(); return { R, off: 1 - k, fr: footprint(R, k) }; }
+      case 'groove': { const g = R * 0.4, k = grooveDepthK(); return { R: g, off: 1 - k, fr: footprint(g, k) }; }
+      case 'smooth': case 'flatten': case 'fill': return { R: R * 1.3, off: 0, fr: R * 1.3 };
+      case 'stretch': return { R: R * 1.4, off: 0, fr: R * 1.4 };
+      case 'inflate': case 'pinch': case 'nudge': return { R: R * 1.2, off: 0, fr: R * 1.2 };
+      default: return { R, off: 0, fr: R };
+    }
+  }
+  /** Applique fn le long du chemin parcouru depuis le dernier point (un pas tous les `step` mm) */
+  function alongPath(c, step, fn) {
+    const l = stroke.last;
+    if (!l) fn(c);
+    else {
+      const dx = c[0] - l[0], dy = c[1] - l[1], dz = c[2] - l[2];
+      const n = Math.max(1, Math.ceil(Math.hypot(dx, dy, dz) / step));
+      for (let i = 1; i <= n; i++) fn([l[0] + dx * i / n, l[1] + dy * i / n, l[2] + dz * i / n]);
+    }
+    stroke.last = c;
+  }
 
   function strokePoint(h, dt) {
-    const R = brushR();
-    if (stroke.tool === 'smooth') {
-      const c = [h.x, h.y, h.z], rr = R * 1.3;
-      if (!stroke.last) { smoothM(c, rr); Sfx.smooth(); }
-      else {
-        const dx = c[0] - stroke.last[0], dy = c[1] - stroke.last[1], dz = c[2] - stroke.last[2];
-        const len = Math.hypot(dx, dy, dz), n = Math.max(1, Math.ceil(len / (R * 0.4)));
-        for (let i = 1; i <= n; i++) smoothM([stroke.last[0] + dx * i / n, stroke.last[1] + dy * i / n, stroke.last[2] + dz * i / n], rr);
-      }
-      stroke.last = c;
-      showCursor(c, rr);
-    } else {
-      const off = stroke.tool === 'add' ? addOff() : removeOff();
-      let c = [h.x + h.nx * R * off, h.y + h.ny * R * off, h.z + h.nz * R * off];
+    const t = stroke.tool, g = brushGeom(t), R = brushR(t), c0 = [h.x, h.y, h.z], n0 = [h.nx, h.ny, h.nz];
+    const ring = { p: c0, r: g.fr };
+    if (t === 'smooth' || t === 'fill') {
+      if (!stroke.last) Sfx.smooth();
+      alongPath(c0, R * 0.4, (c) => smoothM(c, g.R, t === 'fill'));
+      showCursor(c0, g.R, n0, ring);
+    } else if (t === 'paint') {
+      if (!stroke.last) Sfx.smooth();
+      const idx = stroke.inv ? 0 : clay.paint;
+      alongPath(c0, R * 0.35, (c) => paintM(c, g.R, idx));
+      showCursor(c0, g.R, n0, ring);
+    } else if (t === 'inflate') {
+      const amt = (stroke.inv ? -1 : 1) * R * (0.012 + 0.1 * F('inflate'));
+      if (!stroke.last) Sfx.smooth();
+      alongPath(c0, R * 0.4, (c) => inflateM(c, g.R, amt));
+      showCursor(c0, g.R, n0, ring);
+    } else if (t === 'pinch') {
+      const alpha = (stroke.inv ? -1 : 1) * lerp(0.04, 0.3, F('pinch'));
+      if (!stroke.last) Sfx.pull();
+      alongPath(c0, R * 0.4, (c) => pinchM(c, n0, g.R, alpha));
+      showCursor(c0, g.R, n0, ring);
+    } else if (t === 'nudge') {
+      const l = stroke.last;
+      if (l) {
+        const k = (stroke.inv ? -1 : 1) * lerp(0.5, 1.2, F('nudge'));
+        const dx = c0[0] - l[0], dy = c0[1] - l[1], dz = c0[2] - l[2], len = Math.hypot(dx, dy, dz);
+        if (len > 0.05) {
+          const n = Math.max(1, Math.ceil(len / (g.R * 0.3)));
+          for (let i = 0; i < n; i++) grabM([l[0] + dx * i / n, l[1] + dy * i / n, l[2] + dz * i / n], [dx / n, dy / n, dz / n], g.R, k);
+        }
+      } else Sfx.pull();
+      stroke.last = c0;
+      showCursor(c0, g.R, n0, ring);
+    } else {                                           // ajouter, brosse (couche fine), enlever, sillon
+      const adds = t === 'add' || t === 'layer';
+      let c = [h.x + h.nx * g.R * g.off, h.y + h.ny * g.R * g.off, h.z + h.nz * g.R * g.off];
       if (stroke.last) {
         // pinceau « stabilisé » : lisse le tremblement, avec la même durée de lissage quelle que soit la fréquence du périphérique
         const a = 1 - Math.exp(-clamp(dt || 16, 4, 40) / 18), l = stroke.last;
         c = [l[0] + (c[0] - l[0]) * a, l[1] + (c[1] - l[1]) * a, l[2] + (c[2] - l[2]) * a];
-      } else if (stroke.tool === 'add') Sfx.add(); else Sfx.remove();
-      capsuleM(stroke.last || c, c, R, stroke.tool, h);
+      } else if (adds) Sfx.add(); else Sfx.remove();
+      capsuleM(stroke.last || c, c, g.R, adds ? 'add' : 'remove', h, t === 'layer' ? layerHeightK() : undefined);
       stroke.last = c;
-      showCursor(c, R);
+      showCursor(c, g.R, n0, ring);
     }
   }
 
@@ -902,7 +1159,7 @@
       const dx = p.x - l[0], dy = p.y - l[1], dz = p.z - l[2];
       const len = Math.hypot(dx, dy, dz);
       if (len < 0.2) return;
-      const n = Math.ceil(len / (stroke.R * 0.3));
+      const n = Math.ceil(len / (stroke.R * 0.3));       // petits pas : la déformation reste douce et sans repli
       let cur = l;
       for (let i = 1; i <= n; i++) {
         const nx = l[0] + dx * i / n, ny = l[1] + dy * i / n, nz = l[2] + dz * i / n;
@@ -913,9 +1170,9 @@
       showCursor(cur, stroke.R);
       return;
     }
-    const h = pick(e, clay.before);
+    const h = pick(e, ON_CURRENT.has(stroke.tool) ? clay.f : clay.before);
     // un trait reste sur la surface où il a commencé : sur la sculpture il ne « déborde » pas sur le plateau (et inversement)
-    const strays = h && (stroke.tool === 'add' || stroke.tool === 'stamp') && h.floor !== stroke.onFloor;
+    const strays = h && FLOOR_OK.has(stroke.tool) && h.floor !== stroke.onFloor;
     if (strays || !allowed(h, stroke.tool) || !acceptHit(h, e)) { stroke.last = null; hideCursor(); return; }
     if (stroke.tool === 'flatten') { flattenAt(h); return; }
     if (stroke.tool === 'stamp') {                // mode « série »
@@ -948,7 +1205,7 @@
       hideSizeTip();
     }
     if (s.tool === 'stamp') { hideStampGhost(); clay.relaxBox(0.5); clay.relaxBox(0.35); }
-    else if (s.tool !== 'smooth') clay.relaxBox(0.35);
+    else if (!NO_RELAX.has(s.tool)) clay.relaxBox(0.35);   // pas de lissage final pour les déformations : les petits détails restent
     pushUndo(clay.endEdit());
     hideCursor();
     invalidate();
@@ -961,9 +1218,9 @@
   let lastTap = { t: 0, x: 0, y: 0 };
   let mode = null; // stroke | orbit | pan | nav | ghost | none
   let navPrev = null;
-  let placementMode = 'move'; // 'move' | 'view'
-  let strokeQ = [], hoverEvt = null, ghostEvt = null, orbitD = null, panD = null, navDirty = false;
-  const pending = () => strokeQ.length > 0 || hoverEvt || ghostEvt || orbitD || panD || navDirty;
+  let placementMode = 'move'; // 'move' | 'height' | 'view'
+  let strokeQ = [], hoverEvt = null, ghostEvt = null, ghostDy = 0, orbitD = null, panD = null, navDirty = false;
+  const pending = () => strokeQ.length > 0 || hoverEvt || ghostEvt || ghostDy || orbitD || panD || navDirty;
 
   function processInput() {
     if (strokeQ.length) {
@@ -977,7 +1234,8 @@
     }
     if (panD) { pan(panD.x, panD.y); panD = null; }
     if (navDirty) { navDirty = false; navMove(); }
-    if (ghostEvt) { const h = pickPlace(ghostEvt); ghostEvt = null; if (h) moveGhost(h); }
+    if (ghostEvt) { const ge = ghostEvt; ghostEvt = null; dragGhost(ge); }
+    if (ghostDy) { const dy = ghostDy; ghostDy = 0; moveHeight(dy); }
     if (hoverEvt) { const e = hoverEvt; hoverEvt = null; hover(e); }
   }
   function flushInput() { processInput(); }
@@ -1002,16 +1260,20 @@
     if (e.pointerType === 'mouse' && e.button === 1) { mode = 'pan'; return; }
     if ((e.pointerType === 'mouse' && e.button === 2) || (pen && (e.buttons & 2))) { mode = 'orbit'; return; }   // clic droit / bouton du stylet : tourner
     const eraser = pen && ((e.buttons & 32) || e.button === 5);                                                      // gomme du stylet : enlever
+    if (e.pointerType !== 'touch' && e.altKey) { mode = 'pan'; return; }                                             // Alt + glisser : déplacer la vue
+    if (spaceDown) { mode = 'orbit'; return; }                                                                       // Espace + glisser : tourner la vue
     if (placement) {
       if (placementMode === 'view') { mode = 'orbit'; return; }
-      const h = pickPlace(e);
-      if (h) { moveGhost(h); mode = 'ghost'; } else mode = 'orbit';
+      if (placementMode === 'height' || e.shiftKey) { mode = 'gheight'; return; }      // monter / descendre la forme
+      mode = 'ghost';
+      if (!beginGhostDrag(e)) { const h = pickPlace(e); if (h) moveGhost(h); else mode = 'orbit'; }   // sur la forme : on la saisit ; ailleurs : elle vient là
       return;
     }
     if (tool !== 'orbit' || eraser) {
-      const t = eraser ? 'remove' : tool;
+      const rt = eraser ? { tool: 'remove', inv: false } : resolveTool(tool, readMods(e));   // Maj : lisser · Ctrl : l'inverse
       const h = pick(e, clay.f);
-      if (allowed(h, t)) { beginStroke(h, eraser ? 'remove' : null, e); mode = 'stroke'; invalidate(); return; }
+      if (parts.length && partInFront(e, h)) { mode = 'none'; return; }       // une pièce grise est devant : on explique, on ne sculpte pas derrière
+      if (allowed(h, rt.tool)) { setCursorColor(rt.tool); beginStroke(h, rt, e); mode = 'stroke'; invalidate(); return; }
     } else {
       // double-touche : on s'approche de l'endroit touché
       if (now - lastTap.t < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 28) {
@@ -1028,7 +1290,7 @@
     if (e.pointerType === 'pen') penSeen = performance.now();
     const p = ptrs.get(e.pointerId);
     if (!p) {
-      if (e.pointerType === 'mouse' || e.pointerType === 'pen') { hoverEvt = { clientX: e.clientX, clientY: e.clientY, pointerType: e.pointerType }; invalidate(); }
+      if (e.pointerType === 'mouse' || e.pointerType === 'pen') { hoverEvt = { clientX: e.clientX, clientY: e.clientY, pointerType: e.pointerType, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey || e.metaKey, altKey: e.altKey }; invalidate(); }
       return;
     }
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
@@ -1044,6 +1306,7 @@
       case 'orbit': orbitD = orbitD || { x: 0, y: 0 }; orbitD.x += dx; orbitD.y += dy; break;
       case 'pan': panD = panD || { x: 0, y: 0 }; panD.x += dx; panD.y += dy; break;
       case 'ghost': ghostEvt = { clientX: e.clientX, clientY: e.clientY }; break;
+      case 'gheight': ghostDy += dy; break;
       case 'nav': navDirty = true; break;
       default: return;
     }
@@ -1059,7 +1322,7 @@
   }
   canvas.addEventListener('pointerup', up);
   canvas.addEventListener('pointercancel', up);
-  canvas.addEventListener('pointerleave', (e) => { if (!ptrs.size && (e.pointerType === 'mouse' || e.pointerType === 'pen')) { hideCursor(); hideStampGhost(); } });
+  canvas.addEventListener('pointerleave', (e) => { if (!ptrs.size && (e.pointerType === 'mouse' || e.pointerType === 'pen')) { lastHover = null; hideCursor(); hideStampGhost(); } });
 
   /** Zoom : la molette et le pincement rapprochent aussi de l'endroit visé */
   function zoomBy(factor, e) {
@@ -1077,24 +1340,36 @@
     invalidate();
   }
   const wheelFactor = (e) => Math.exp(e.deltaY * (e.deltaMode === 1 ? 0.04 : 1) * (e.ctrlKey ? 0.01 : 0.0012));
-  canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomBy(wheelFactor(e), e); }, { passive: false });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (placement && e.shiftKey) {                    // Maj + molette : taille de la forme (pied toujours au sol, même position)
+      const d = e.deltaY || e.deltaX;
+      placement.size = clamp(placement.size * Math.exp(-d * (e.deltaMode === 1 ? 0.04 : 0.0012)), 5, placement.maxSize);
+      updateGhost();
+      return;
+    }
+    zoomBy(wheelFactor(e), e);
+  }, { passive: false });
 
   function hover(e) {
+    lastHover = e;
     if (placement) {
       // le survol ne déplace JAMAIS la forme (sinon un clic ne la « poserait » pas : elle suivrait la souris) :
       // elle se place en cliquant ou en la faisant glisser ; au survol, un petit repère montre où le clic la posera
-      const h = placementMode === 'move' ? pickPlace(e) : null;
+      const h = placementMode === 'move' && !e.shiftKey ? pickPlace(e) : null;
       if (h) showCursor([h.x, h.y, h.z], 1.6); else hideCursor();
       return;
     }
-    if (tool === 'orbit') return;
+    if (tool === 'orbit' || spaceDown || e.altKey) { hideCursor(); hideStampGhost(); return; }
     curPressure = 1; curForceMul = 1;               // survol : taille « normale » (la pression ne compte que pendant le trait)
+    const t = resolveTool(tool, { shift: !!e.shiftKey, ctrl: !!e.ctrlKey, alt: false }).tool;   // Maj / Ctrl changent l'outil, donc le curseur
+    setCursorColor(t);
     const h = pick(e, clay.f);
-    if (!allowed(h)) { hideCursor(); hideStampGhost(); return; }
-    if (tool === 'stamp') { showStampGhost(h, stampSizeDefault()); return; }
-    const R = tool === 'smooth' || tool === 'flatten' ? brushR() * 1.3 : tool === 'stretch' ? brushR() * 1.4 : brushR();
-    const off = tool === 'add' ? addOff() : tool === 'remove' ? removeOff() : 0;
-    showCursor([h.x + h.nx * R * off, h.y + h.ny * R * off, h.z + h.nz * R * off], R);
+    if (!allowed(h, t)) { hideCursor(); hideStampGhost(); return; }
+    if (t === 'stamp') { showStampGhost(h, stampSizeDefault()); return; }
+    hideStampGhost();
+    const g = brushGeom(t);
+    showCursor([h.x + h.nx * g.R * g.off, h.y + h.ny * g.R * g.off, h.z + h.nz * g.R * g.off], g.R, [h.nx, h.ny, h.nz], { p: [h.x, h.y, h.z], r: g.fr });
   }
 
   const panR = new THREE.Vector3(), panU = new THREE.Vector3(), panF = new THREE.Vector3();
@@ -1239,27 +1514,76 @@
   function setPlacementMode(m) {
     placementMode = m;
     $('#pl-mode-move').classList.toggle('active', m === 'move');
+    $('#pl-mode-height').classList.toggle('active', m === 'height');
     $('#pl-mode-view').classList.toggle('active', m === 'view');
-    setHint(m === 'view' ? 'Glisse pour regarder sous tous les angles sans déplacer la forme.' : 'Touche l’endroit de la sculpture ou du plateau où poser la forme.');
+    setHint(m === 'view' ? 'Glisse pour regarder sous tous les angles sans déplacer la forme.'
+      : m === 'height' ? 'Glisse vers le haut ou le bas pour monter ou descendre la forme. Le trait bleu montre sa hauteur au-dessus du plateau.'
+        : 'Glisse la forme pour la déplacer sur le plateau, ou touche l’endroit de la sculpture où la poser. Maj + glisser : monter / descendre ; Maj + molette : taille.');
   }
   $('#pl-mode-move').addEventListener('click', () => setPlacementMode('move'));
+  /* dimensions de la forme (cm) : on peut les taper ; elles gardent les proportions et la position sur le plateau (pied au sol) */
+  const pdBox = $('#place-dims');
+  pdBox.innerHTML = ['L', 'H', 'P'].map((l, i) => '<label>' + l + '<input type="number" step="0.1" min="0.1" inputmode="decimal" data-pd="' + i + '" aria-label="Dimension ' + l + ' en cm"></label>').join('') + '<span>cm</span>';
+  pdBox.querySelectorAll('input').forEach((inp) => inp.addEventListener('change', () => {
+    if (!placement) return;
+    const v = parseFloat(String(inp.value).replace(',', '.')), i = +inp.dataset.pd;
+    if (v > 0 && placement.ext[i] > 1e-6) placement.size = clamp((v * 10) / placement.ext[i], 5, placement.maxSize);
+    updateGhost();
+  }));
+  $('#pl-mode-height').addEventListener('click', () => setPlacementMode('height'));
   $('#pl-mode-view').addEventListener('click', () => setPlacementMode('view'));
 
   function setPlacing(on) {
     body.classList.toggle('placing', on);
     $('#place').hidden = !on;
     $('#stamp-bar').hidden = on || tool !== 'stamp';
+    brushBar.hidden = on || !brushBarOpen;
     if (on) { hideStampGhost(); hideCursor(); }
     updateViewOffset(); invalidate();
   }
 
-  /** native = true : la forme garde sa vraie taille (formes de départ) ; sinon taille « agréable » selon que la surface est vide ou non */
-  function startPlacement(soup, name, native) {
+  /* repère au sol : cercle sous la forme + trait vertical jusqu'au plateau, pour lire sa position et sa hauteur */
+  const guideMat = new THREE.MeshBasicMaterial({ color: 0x0284c7, transparent: true, opacity: 0.9, depthTest: false, side: THREE.DoubleSide });
+  const guideFill = new THREE.MeshBasicMaterial({ color: 0x0284c7, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
+  const guideLineMat = new THREE.LineBasicMaterial({ color: 0x0284c7, transparent: true, opacity: 0.9, depthTest: false });
+  const Y_UP = new THREE.Vector3(0, 1, 0), pPoint = new THREE.Vector3();
+  function makeGuide() {
+    const g = new THREE.Group();
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.93, 1, 56), guideMat); ring.rotation.x = -Math.PI / 2; ring.renderOrder = 6;
+    const fill = new THREE.Mesh(new THREE.CircleGeometry(0.93, 40), guideFill); fill.rotation.x = -Math.PI / 2;
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(1, 20), guideMat); dot.rotation.x = -Math.PI / 2; dot.renderOrder = 6;
+    const lg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0)]);
+    const line = new THREE.Line(lg, guideLineMat); line.renderOrder = 6;
+    g.add(fill, ring, dot, line);
+    g.userData = { ring, fill, dot, line };
+    for (const o of [fill, ring, dot, line]) o.frustumCulled = false;
+    return g;
+  }
+  function updateGuide() {
+    const p = placement;
+    if (!p || !p.guide) return;
+    const ex = ghostExtent(), pos = p.mesh.position, u = p.guide.userData;
+    const r = Math.max(2.5, Math.max(ex.hx, ex.hz) + 0.8);
+    p.guide.position.set(pos.x, 0.5, pos.z);
+    u.ring.scale.set(r, r, 1); u.fill.scale.set(r, r, 1);
+    const d = Math.max(0.9, r * 0.07); u.dot.scale.set(d, d, 1);
+    const gap = pos.y - ex.hy - 0.5;                    // distance entre le dessous de la forme et le plateau
+    u.line.visible = gap > 0.6;
+    u.line.scale.set(1, Math.max(gap, 0.01), 1);
+    u.line.position.set(0, 0, 0);
+  }
+
+  /** native = true : la forme garde sa vraie taille (formes de départ, fichiers importés) ; sinon taille « agréable » selon que la surface est vide ou non.
+   *  opt : { imported (fichier de l'utilisateur : maillage gardé tel quel par défaut), replacing (pièce qu'on déplace), keepPos (reprendre sa place) } */
+  function startPlacement(soup, name, native, opt) {
     cancelPlacement();
     endStroke();
+    commitResize();
+    opt = opt || {};
     const norm = IO.normalize(soup);
-    const startSize = native ? Math.max(norm.origExt[0], norm.origExt[1], norm.origExt[2])
-      : clay.isEmpty() ? Math.min(40, 0.45 * WL) : Math.min(25, 0.4 * WL);
+    const origMax = Math.max(norm.origExt[0], norm.origExt[1], norm.origExt[2]);
+    const startSize = native ? origMax : clay.isEmpty() ? Math.min(40, 0.45 * WL) : Math.min(25, 0.4 * WL);
+    const maxSize = opt.imported ? Math.max(0.9 * WL, origMax) : 0.9 * WL;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(norm.pos, 3));
     geo.computeVertexNormals();
@@ -1271,38 +1595,104 @@
     xray.frustumCulled = false; xray.renderOrder = 3;
     mesh.add(xray);
     scene.add(mesh);
+    const guide = makeGuide();
+    scene.add(guide);
 
-    // la forme apparaît à l'endroit que l'on regarde (au milieu de la zone libre), pas cachée au centre du plateau
-    const rc = canvas.getBoundingClientRect();
-    let h = pick({ clientX: rc.left + freeC.x, clientY: rc.top + freeC.y }, clay.f);
-    if (!h) h = { x: 0, y: 0, z: 0, floor: true };
+    // position de départ : surface vide → au milieu du plateau, posée au sol (jamais décalée en profondeur) ;
+    // sinon à l'endroit que l'on regarde (milieu de la zone libre)
+    let h;
+    if (opt.keepPos) h = { x: (norm.min[0] + norm.max[0]) / 2, y: (norm.min[1] + norm.max[1]) / 2, z: (norm.min[2] + norm.max[2]) / 2, floor: false };
+    else if (clay.isEmpty()) h = { x: 0, y: 0, z: 0, floor: true };
+    else {
+      const rc = canvas.getBoundingClientRect();
+      h = pick({ clientX: rc.left + freeC.x, clientY: rc.top + freeC.y }, clay.f) || { x: 0, y: 0, z: 0, floor: true };
+    }
     placement = {
-      mesh, base: norm.pos, ext: norm.ext, name, geo, ghosts: [],
-      size: clamp(startSize, 5, 0.9 * WL), yaw: 0, pitch: 0, roll: 0, offY: 0, carve: false, mirror: false, mirrorAuto: true,
+      mesh, base: norm.pos, ext: norm.ext, name, geo, ghosts: [], guide,
+      size: clamp(startSize, 5, maxSize), maxSize, yaw: 0, pitch: 0, roll: 0, offY: 0, carve: false, keep: !!opt.imported, imported: !!opt.imported,
+      replacing: opt.replacing || null, done: false, drag: null, mirror: false, mirrorAuto: true,
       hit: { x: h.x, y: h.y, z: h.z, floor: h.floor }
     };
     $('#place-name').textContent = name;
-    $('#pl-add').classList.add('active');
-    $('#pl-carve').classList.remove('active');
-    $('#place').classList.remove('expanded');
-    $('#pl-more').textContent = 'Plus d’options';
-    $('#pl-size').max = String(Math.round(0.9 * WL));
+    $('#pl-keep').hidden = !placement.imported;
+    const wide = clay.isEmpty();                  // surface vide : on place la forme à la main, donc haut / bas / déplacement sont déjà là
+    $('#place').classList.toggle('expanded', wide);
+    $('#pl-more').textContent = wide ? 'Moins d’options' : 'Plus d’options';
+    $('#pl-size').max = String(Math.round(maxSize));
     setPlacing(true);
     setPlacementMode('move');
-    updateGhost();
-    setHint('Forme prête ! Touche l’endroit où la poser, change sa taille, puis appuie sur « Poser ».');
+    setPlaceOp(placement.keep ? 'keep' : 'add');
+    setHint(placement.imported
+      ? 'Fichier prêt, à sa taille d’origine. « Garder tel quel » : maillage fidèle mais non sculptable (pièce grise). « Coller » : fondu dans l’argile, modifiable.'
+      : 'Forme prête ! Glisse-la ou touche l’endroit où la poser, change sa taille, puis appuie sur « Poser ».');
   }
 
-  function ghostHalfHeight() {
+  /** Ce que fait « Poser » : coller dans l'argile, creuser, ou (fichier importé) garder le maillage tel quel */
+  function setPlaceOp(op) {
+    const p = placement;
+    if (!p) return;
+    p.carve = op === 'carve'; p.keep = op === 'keep';
+    $('#pl-add').classList.toggle('active', op === 'add');
+    $('#pl-carve').classList.toggle('active', op === 'carve');
+    $('#pl-keep').classList.toggle('active', op === 'keep');
+    if (p.keep) { clearPreview(); p.mirror = false; }
+    updateGhost();
+  }
+
+  /** Demi-dimensions de la forme (tournée et mise à l'échelle) le long des axes de la scène */
+  function ghostExtent() {
     const p = placement;
     const m = new THREE.Matrix4().makeRotationFromEuler(p.mesh.rotation);
-    let maxY = 0;
+    let hx = 0, hy = 0, hz = 0;
     const v = new THREE.Vector3();
     for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
       v.set(sx * p.ext[0] / 2, sy * p.ext[1] / 2, sz * p.ext[2] / 2).applyMatrix4(m);
-      if (v.y > maxY) maxY = v.y;
+      if (Math.abs(v.x) > hx) hx = Math.abs(v.x);
+      if (v.y > hy) hy = v.y;
+      if (Math.abs(v.z) > hz) hz = Math.abs(v.z);
     }
-    return maxY * p.size;
+    return { hx: hx * p.size, hy: hy * p.size, hz: hz * p.size };
+  }
+  function ghostHalfHeight() { return ghostExtent().hy; }
+
+  /* saisir la forme : si le doigt / la souris est sur elle, elle suit le geste sans « sauter » (au sol : glisse sur le plateau ;
+     sur la sculpture : suit la surface) ; ailleurs, elle vient se poser à l'endroit touché */
+  function beginGhostDrag(e) {
+    const p = placement;
+    p.drag = null;
+    const ex = ghostExtent(), c = p.mesh.position;
+    const ray = rayFrom(e);
+    if (!ray.intersectsSphere(new THREE.Sphere(c, Math.hypot(ex.hx, ex.hy, ex.hz) * 0.85))) return false;
+    if (!p.hit.floor) {
+      const h0 = pickPlace(e);
+      if (h0 && !h0.floor) { p.drag = { kind: 'surf', h0, from: { x: p.hit.x, y: p.hit.y, z: p.hit.z } }; return true; }
+    }
+    planeTmp.setFromNormalAndCoplanarPoint(Y_UP, pPoint.set(0, c.y, 0));
+    if (!ray.intersectPlane(planeTmp, pPoint)) return false;
+    p.drag = { kind: 'plane', y: c.y, ox: p.hit.x - pPoint.x, oz: p.hit.z - pPoint.z };
+    return true;
+  }
+  function dragGhost(e) {
+    const p = placement;
+    if (!p) return;
+    const d = p.drag;
+    if (!d) { const h = pickPlace(e); if (h) moveGhost(h); return; }
+    if (d.kind === 'plane') {
+      planeTmp.setFromNormalAndCoplanarPoint(Y_UP, pPoint.set(0, d.y, 0));
+      if (!rayFrom(e).intersectPlane(planeTmp, pPoint)) return;
+      moveGhost({ x: clamp(pPoint.x + d.ox, -WH + 1, WH - 1), y: p.hit.y, z: clamp(pPoint.z + d.oz, -WH + 1, WH - 1), floor: p.hit.floor });
+    } else {
+      const h = pickPlace(e);
+      if (!h || h.floor) return;
+      moveGhost({ x: d.from.x + h.x - d.h0.x, y: d.from.y + h.y - d.h0.y, z: d.from.z + h.z - d.h0.z, floor: false });
+    }
+  }
+  function moveHeight(dy) {
+    const p = placement;
+    if (!p) return;
+    p.offY -= dy * worldPerPx(camera.position.distanceTo(p.mesh.position));
+    p.offY = p.hit.floor ? Math.max(0, p.offY) : Math.max(-p.hit.y, p.offY);
+    updateGhost();
   }
 
   function updateGhost() {
@@ -1316,12 +1706,15 @@
     const y = h.floor ? ghostHalfHeight() + p.offY : h.y + p.offY;
     p.mesh.position.set(x, Math.max(0, y), z);
     syncMirrorGhosts();
+    updateGuide();
 
-    $('#place-dims').textContent = `L ${(p.ext[0] * p.size / 10).toFixed(1)} × H ${(p.ext[1] * p.size / 10).toFixed(1)} × P ${(p.ext[2] * p.size / 10).toFixed(1)} cm`;
+    pdBox.querySelectorAll('input').forEach((inp) => { if (document.activeElement !== inp) inp.value = (p.ext[+inp.dataset.pd] * p.size / 10).toFixed(1); });
     $('#place-size-label').textContent = (p.size / 10).toFixed(1) + ' cm';
     $('#pl-size').value = Math.round(p.size);
     const deg = (r) => { let d = Math.round((r * 180 / Math.PI) % 360); if (d < 0) d += 360; return d; };
     $('#place-angles-label').textContent = `Y: ${deg(p.yaw)}° · X: ${deg(p.pitch)}° · Z: ${deg(p.roll)}°`;
+    ghostMat.opacity = opts.boolPreview && !p.keep ? 0.3 : 0.78;       // avec l'aperçu, on voit le résultat à travers la forme
+    schedulePreview();
     invalidate();
   }
 
@@ -1335,6 +1728,11 @@
   const mirM4 = new THREE.Matrix4();
   function syncMirrorGhosts() {
     const p = placement, xs = xfs();
+    if (p.keep) {                                         // pièce importée : pas de copie miroir (le maillage reste celui du fichier)
+      $('#pl-mirror').hidden = true;
+      p.ghosts.forEach((m) => { m.visible = false; });
+      return;
+    }
     // par défaut : un objet posé sur le plateau reste seul ; posé sur la sculpture (yeux, oreilles…), la symétrie le double.
     // Le bouton « Miroir » reprend la main.
     if (p.mirrorAuto) p.mirror = sym !== 'off' && !p.hit.floor;
@@ -1367,16 +1765,40 @@
 
   function cancelPlacement() {
     if (!placement) return;
+    clearPreview();
     scene.remove(placement.mesh);
     for (const g of placement.ghosts) scene.remove(g);
+    scene.remove(placement.guide);
+    placement.guide.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
     placement.geo.dispose();
+    if (placement.replacing && !placement.done) addPartRaw(placement.replacing);      // déplacement annulé : la pièce revient
     placement = null;
     setPlacing(false);
   }
 
-  function validatePlacement() {
-    const p = placement;
-    if (!p) return;
+  /* Aperçu en direct du booléen (Coller / Creuser) : la forme est vraiment collée ou creusée dans la sculpture, puis
+     * annulée au coup suivant. Un seul calcul à la fois, espacé de 3× son propre coût : le déplacement reste fluide. */
+  let pvEntry = null, pvTimer = 0, pvLast = 0, pvCost = 20;
+  function clearPreview() {
+    clearTimeout(pvTimer); pvTimer = 0;
+    if (pvEntry) { clay.undoEntry(pvEntry); pvEntry = null; invalidate(); }
+  }
+  function schedulePreview() {
+    if (!opts.boolPreview || !placement || placement.keep || placement.base.length > 9 * 400000 || pvTimer) return;
+    pvTimer = setTimeout(runPreview, Math.max(0, pvLast + Math.max(80, pvCost * 3) - performance.now()));
+  }
+  function runPreview() {
+    pvTimer = 0;
+    if (!placement || placement.keep || !opts.boolPreview) return;
+    const t0 = performance.now();
+    if (pvEntry) { clay.undoEntry(pvEntry); pvEntry = null; }
+    pvEntry = placementEdit(placement);
+    pvLast = performance.now(); pvCost = pvLast - t0;
+    invalidate();
+  }
+  /** Colle ou creuse la forme (et ses copies miroir) dans la sculpture ; retourne l'entrée d'historique (ou null) */
+  /** La forme dans le monde (mm) : sommets du maillage de base transformés par sa position, sa rotation et sa taille */
+  function placementWorld(p) {
     p.mesh.updateMatrix();
     const e = p.mesh.matrix.elements;
     const b = p.base, n = b.length;
@@ -1387,6 +1809,10 @@
       world[i + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
       world[i + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
     }
+    return world;
+  }
+  function placementEdit(p) {
+    const world = placementWorld(p);
     const m = p.carve ? 'remove' : 'add';
     clay.beginEdit();
     const pc = [p.mesh.position.x, p.mesh.position.y, p.mesh.position.z];
@@ -1398,7 +1824,25 @@
       clay.stampMesh(applyM(world, M), m);
     });
     clay.relaxBox(0.5); clay.relaxBox(0.4);
-    const entry = clay.endEdit();
+    return clay.endEdit();
+  }
+
+  function validatePlacement() {
+    const p = placement;
+    if (!p) return;
+    clearPreview();
+    if (p.keep) {                                         // pièce importée : le maillage d'origine est gardé tel quel
+      const part = makePart(p.name, placementWorld(p));
+      addPartRaw(part);
+      pushUndo(p.replacing ? { partOp: 'swap', from: p.replacing, to: part } : { partOp: 'add', part });
+      Sfx.place();
+      p.done = true;
+      cancelPlacement();
+      setTool('add');
+      toast('Pièce grise posée : maillage gardé tel quel. Pour la sculpter, touche « Sculpter » dans la colonne de droite.');
+      return;
+    }
+    const entry = placementEdit(p);
     if (!entry) toast(p.carve ? 'Il n’y a rien à creuser à cet endroit !' : 'La forme est en dehors du plateau !');
     pushUndo(entry);
     if (entry) Sfx.place();
@@ -1440,19 +1884,16 @@
   $('#pl-floor').addEventListener('click', () => {
     if (placement) { placement.hit.floor = true; placement.hit.y = 0; placement.offY = 0; updateGhost(); toast('Forme posée au sol du plateau'); }
   });
-  const sizeMax = () => 0.9 * WL;
+  const sizeMax = () => (placement ? placement.maxSize : 0.9 * WL);
   $('#pl-bigger').addEventListener('click', () => { if (placement) { placement.size = Math.min(sizeMax(), placement.size * 1.15); updateGhost(); } });
   $('#pl-smaller').addEventListener('click', () => { if (placement) { placement.size = Math.max(5, placement.size / 1.15); updateGhost(); } });
   $('#pl-double').addEventListener('click', () => { if (placement) { placement.size = Math.min(sizeMax(), placement.size * 2); updateGhost(); } });
   $('#pl-half').addEventListener('click', () => { if (placement) { placement.size = Math.max(5, placement.size * 0.5); updateGhost(); } });
   $('#pl-size').addEventListener('input', (e) => { if (placement) { placement.size = +e.target.value; updateGhost(); } });
   $$('.chip[data-scale]').forEach((chip) => chip.addEventListener('click', () => { if (placement) { placement.size = +chip.dataset.scale; updateGhost(); } }));
-  $('#pl-add').addEventListener('click', () => {
-    if (placement) { placement.carve = false; $('#pl-add').classList.add('active'); $('#pl-carve').classList.remove('active'); }
-  });
-  $('#pl-carve').addEventListener('click', () => {
-    if (placement) { placement.carve = true; $('#pl-carve').classList.add('active'); $('#pl-add').classList.remove('active'); }
-  });
+  $('#pl-add').addEventListener('click', () => setPlaceOp('add'));
+  $('#pl-carve').addEventListener('click', () => setPlaceOp('carve'));
+  $('#pl-keep').addEventListener('click', () => setPlaceOp('keep'));
 
   /* ------------------------------------------------------------------ Fenêtres, formes, import */
   function openModal(id) { $(id).hidden = false; }
@@ -1487,8 +1928,8 @@
   shapeSection('Formes simples', IO.SHAPES.map((s) => ({
     emoji: s.emoji, name: s.name, pick: () => { closeModals(); startPlacement(IO.shapeSoup(THREE, s.id), s.name); }
   })), 'shape-grid');
-  ['Personnages', 'Animaux', 'Objets', 'Bases'].forEach((cat) => {
-    const items = ClayStarters.list.filter((s) => s.cat === cat && s.id !== 'ball');   // la boule existe déjà dans les formes simples
+  [...ClayStarters.categories.filter((c) => c !== 'Bases'), 'Bases'].forEach((cat) => {   // modèles de l'atelier en premier, les bases à la fin
+    const items = ClayStarters.list.filter((s) => s.cat === cat && s.id !== 'ball' && s.id !== 'ballair');   // la boule existe déjà dans les formes simples
     shapeSection(cat === 'Bases' ? 'Autres formes' : cat, items.map((s) => ({ emoji: s.emoji, name: s.name, pick: () => placeStarter(s) })));
   });
   function openShapes() {
@@ -1509,18 +1950,19 @@
 
   function handleFile(file) {
     const ext = (file.name.split('.').pop() || '').toLowerCase();
-    if (ext !== 'stl' && ext !== 'obj') { toast('Je lis les fichiers .stl et .obj'); return; }
+    if (ext !== 'stl' && ext !== 'obj' && ext !== 'pate3d' && ext !== 'json') { toast('Je lis les projets .pate3d et les fichiers 3D .stl et .obj'); return; }
     const reader = new FileReader();
     reader.onerror = () => toast('Impossible de lire ce fichier');
     reader.onload = () => {
+      if (ext === 'pate3d' || ext === 'json') { closeModals(); openProject(String(reader.result)); return; }
       try {
         const soup = ext === 'stl' ? IO.parseSTL(reader.result) : IO.parseOBJ(reader.result);
         if (soup.length < 9) { toast('Ce fichier ne contient pas de forme 3D'); return; }
         const nTri = Math.round(soup.length / 9);
-        if (nTri > 500000) { toast('Ce fichier est trop gros (plus de 500 000 triangles)'); return; }
+        if (nTri > 3000000) { toast('Ce fichier est trop gros (plus de 3 000 000 de triangles)'); return; }
         closeModals();
-        startPlacement(soup, file.name.replace(/\.[^.]+$/, '').slice(0, 24));
-        toast(`Fichier ${file.name} chargé (${nTri.toLocaleString('fr-FR')} triangles)`);
+        startPlacement(soup, file.name.replace(/\.[^.]+$/, '').slice(0, 24), true, { imported: true });
+        toast(`Fichier ${file.name} chargé (${nTri.toLocaleString('fr-FR')} triangles) : maillage original gardé`);
       } catch (err) {
         console.error(err);
         toast('Ce fichier n’a pas pu être lu. Vérifie le format STL ou OBJ.');
@@ -1557,11 +1999,18 @@
     });
     starterList.appendChild(h); starterList.appendChild(grid);
   });
+  const airBtn = $('#start-air');
+  let startAir = false;
+  function syncAir() { airBtn.classList.toggle('active', startAir); airBtn.setAttribute('aria-pressed', String(startAir)); }
+  airBtn.addEventListener('click', () => { startAir = !startAir; syncAir(); });
+  syncAir();
   function startFrom(id) {
     closeModals();
     cancelPlacement();
     undoStack.length = 0; redoStack.length = 0;
-    clay.reset(id);
+    cancelResize();
+    clearParts();
+    clay.reset(id, startAir ? 22 : 0);              // « en l'air » : la forme flotte 22 mm au-dessus du plateau (on peut ajouter dessous)
     refreshUndo();                                 // met aussi à jour l'état « surface vide »
     goTo(Object.assign(defaultView(), { az: nearestAngle(view.az, 0) }));
     scheduleSave();
@@ -1577,6 +2026,7 @@
 
   $('#btn-smooth-all').addEventListener('click', () => {
     endStroke();
+    commitResize();
     clay.beginEdit();
     const ok = clay.smoothAll(0.6);
     const entry = clay.endEdit();
@@ -1586,19 +2036,145 @@
     invalidate();
   });
 
-  /* étirer toute la forme */
-  $$('[data-scale-all]').forEach((b) => b.addEventListener('click', () => {
+  /* ---------------------------------------------------------------- Taille de la sculpture (argile + pièces importées)
+     La sculpture grandit ou rétrécit autour du milieu de son emprise sur le plateau, pied posé au sol : elle reste là où elle est.
+     Pendant le réglage, on voit un aperçu instantané (simple mise à l'échelle de l'affichage) ; « Appliquer » fait le vrai calcul en une
+     seule fois (donc un seul rééchantillonnage), avec annulation. Les pièces importées sont mises à l'échelle exactement (sans lissage). */
+  function partBounds(p) {
+    if (p.bb) return p.bb;
+    const s = p.soup, mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < s.length; i += 3) for (let k = 0; k < 3; k++) { const v = s[i + k]; if (v < mn[k]) mn[k] = v; if (v > mx[k]) mx[k] = v; }
+    return (p.bb = { min: mn, max: mx });
+  }
+  function contentBounds() {
+    const b = clay.bounds();
+    const min = b ? b.min.slice() : [Infinity, Infinity, Infinity], max = b ? b.max.slice() : [-Infinity, -Infinity, -Infinity];
+    for (const p of parts) { const pb = partBounds(p); for (let k = 0; k < 3; k++) { if (pb.min[k] < min[k]) min[k] = pb.min[k]; if (pb.max[k] > max[k]) max[k] = pb.max[k]; } }
+    return min[0] <= max[0] ? { min, max } : null;
+  }
+  /** facteurs maximaux par axe pour que la sculpture reste dans le plateau */
+  function rsLimits(b) {
+    const ax = (b.min[0] + b.max[0]) / 2, az = (b.min[2] + b.max[2]) / 2;
+    const lim = (a, lo, hi) => {
+      let m = Infinity;
+      if (hi - a > 0.01) m = Math.min(m, (WH - 2 - a) / (hi - a));
+      if (a - lo > 0.01) m = Math.min(m, (WH - 2 + a) / (a - lo));
+      return m;
+    };
+    return { x: lim(ax, b.min[0], b.max[0]), z: lim(az, b.min[2], b.max[2]), y: b.max[1] > 0.01 ? (WL - 3) / b.max[1] : Infinity };
+  }
+  function rsBegin() {
+    if (rs.on) return true;
+    const b = contentBounds();
+    if (!b) { toast('Il n’y a rien à redimensionner !'); return false; }
+    rs.base = { min: b.min, max: b.max, ax: (b.min[0] + b.max[0]) / 2, az: (b.min[2] + b.max[2]) / 2 };
+    rs.on = true; rs.sx = rs.sy = rs.sz = 1; rs.warned = false;
+    if (!rs.guide) { rs.guide = makeGuide(); rs.guide.userData.line.visible = false; }
+    scene.add(rs.guide);
+    const L = rsLimits(rs.base);
+    $('#rs-slider').max = String(Math.max(100, Math.min(300, Math.floor(100 * Math.min(L.x, L.y, L.z)))));
+    return true;
+  }
+  function rsTransforms(on) {
+    const b = rs.base, sx = on ? rs.sx : 1, sy = on ? rs.sy : 1, sz = on ? rs.sz : 1;
+    const px = on ? b.ax * (1 - sx) : 0, pz = on ? b.az * (1 - sz) : 0;
+    clay.group.scale.set(sx, sy, sz); clay.group.position.set(px, 0, pz);
+    for (const p of parts) { p.mesh.scale.set(sx, sy, sz); p.mesh.position.set(px, 0, pz); }
+  }
+  function rsUpdate() {
+    const L = rsLimits(rs.base), b = rs.base;
+    const cl = (v, m) => { if (v > m) { if (!rs.warned) { rs.warned = true; toast('Limite du plateau : la sculpture ne peut pas être plus grande ici'); } return m; } return Math.max(v, 0.1); };
+    rs.sx = cl(rs.sx, L.x); rs.sy = cl(rs.sy, L.y); rs.sz = cl(rs.sz, L.z);
+    rsTransforms(true);
+    const r = Math.max(2.5, 0.5 * Math.max((b.max[0] - b.min[0]) * rs.sx, (b.max[2] - b.min[2]) * rs.sz) + 1);
+    rs.guide.position.set(b.ax, 0.5, b.az);
+    rs.guide.userData.ring.scale.set(r, r, 1); rs.guide.userData.fill.scale.set(r, r, 1);
+    const d = Math.max(0.9, r * 0.07); rs.guide.userData.dot.scale.set(d, d, 1);
+    $('#rs-actions').hidden = false;
+    $('#rs-slider').value = String(Math.round(100 * Math.min(rs.sx, rs.sy, rs.sz)));
+    refreshDims();
+    invalidate();
+  }
+  function rsEnd() {
+    if (!rs.on) return;
+    rsTransforms(false);
+    scene.remove(rs.guide);
+    rs.on = false;
+    $('#rs-actions').hidden = true;
+    $('#rs-slider').value = '100';
+    refreshDims();
+    invalidate();
+  }
+  function cancelResize() { rsEnd(); }
+  function commitResize() { if (rs.on) { if (Math.abs(rs.sx - 1) + Math.abs(rs.sy - 1) + Math.abs(rs.sz - 1) < 1e-3) rsEnd(); else rsApply(); } }
+  function rsApply() {
+    if (!rs.on) return;
+    const { sx, sy, sz } = rs, b = rs.base;
+    rsEnd();
     endStroke();
-    const [sx, sy, sz] = b.dataset.scaleAll.split(',').map(Number);
     clay.beginEdit();
-    const ok = clay.scaleAbout(sx, sy, sz);
+    const ok = clay.scaleAboutWorld(sx, sy, sz, b.ax, b.az);
     if (ok) clay.relaxBox(0.3);
     const entry = clay.endEdit();
-    if (!entry) { toast('Il n’y a rien à étirer !'); return; }
-    pushUndo(entry);
-    Sfx.place();
-    invalidate();
-  }));
+    const swaps = parts.slice().map((p) => {
+      const s = p.soup, o = new Float32Array(s.length);
+      for (let i = 0; i < s.length; i += 3) { o[i] = b.ax + (s[i] - b.ax) * sx; o[i + 1] = s[i + 1] * sy; o[i + 2] = b.az + (s[i + 2] - b.az) * sz; }
+      const np = makePart(p.name, o);
+      removePartRaw(p); addPartRaw(np);
+      return { from: p, to: np };
+    });
+    if (!entry && !swaps.length) return;
+    pushUndo({ partOp: 'group', clay: entry, swaps });
+    Sfx.place(); shadowDirty = true; invalidate(); refreshDims();
+  }
+  let dimsTimer = 0;
+  function scheduleDims() { clearTimeout(dimsTimer); dimsTimer = setTimeout(refreshDims, 350); }   // le calcul balaie la grille : jamais pendant un geste
+  /** dimensions affichées (cm) : celles de la sculpture, ou celles de l'aperçu pendant le réglage */
+  function refreshDims() {
+    const b = rs.on ? rs.base : contentBounds();
+    const inp = [$('#rs-l'), $('#rs-h'), $('#rs-p')];
+    const off = !b;
+    for (const i of inp) i.disabled = off;
+    for (const id of ['#rs-slider', '#rs-minus', '#rs-plus']) $(id).disabled = off;
+    $$('[data-scale-all]').forEach((x) => { x.disabled = off; });
+    if (off) { for (const i of inp) i.value = ''; $('#rs-val').textContent = '—'; return; }
+    const f = rs.on ? [rs.sx, rs.sy, rs.sz] : [1, 1, 1];
+    const v = [(b.max[0] - b.min[0]) * f[0], (b.max[1] - b.min[1]) * f[1], (b.max[2] - b.min[2]) * f[2]];
+    inp.forEach((i, k) => { if (document.activeElement !== i) i.value = (v[k] / 10).toFixed(1); });
+    $('#rs-val').textContent = rs.on ? Math.round(100 * (f[0] + f[1] + f[2]) / 3) + ' %' : '100 %';
+  }
+  const rsBump = (fx, fy, fz) => { if (!rsBegin()) return; rs.sx *= fx; rs.sy *= fy; rs.sz *= fz; rsUpdate(); };
+  $('#rs-slider').addEventListener('input', (e) => {
+    if (!rsBegin()) { e.target.value = '100'; return; }
+    rs.sx = rs.sy = rs.sz = +e.target.value / 100;
+    rsUpdate();
+  });
+  $('#rs-minus').addEventListener('click', () => rsBump(0.9, 0.9, 0.9));
+  $('#rs-plus').addEventListener('click', () => rsBump(1.1, 1.1, 1.1));
+  $$('[data-scale-all]').forEach((b) => b.addEventListener('click', () => { const [x, y, z] = b.dataset.scaleAll.split(',').map(Number); rsBump(x, y, z); }));
+  [['#rs-l', 0, 'sx'], ['#rs-h', 1, 'sy'], ['#rs-p', 2, 'sz']].forEach(([id, k, key]) => {
+    $(id).addEventListener('change', () => {
+      const v = parseFloat(String($(id).value).replace(',', '.'));
+      if (!(v > 0)) { refreshDims(); return; }
+      const b0 = rs.on ? rs.base : contentBounds();
+      if (!b0 || !rsBegin()) return;
+      const base = rs.base.max[k] - rs.base.min[k];
+      if (base < 0.01) { refreshDims(); return; }
+      const f = (v * 10) / base;
+      if (rs.lock) { rs.sx = rs.sy = rs.sz = f; } else rs[key] = f;
+      rsUpdate();
+    });
+  });
+  $('#rs-lock').addEventListener('click', () => {
+    rs.lock = !rs.lock;
+    $('#rs-lock').setAttribute('aria-pressed', String(rs.lock));
+    $('#rs-lock').querySelector('use').setAttribute('href', rs.lock ? '#i-lock' : '#i-unlock');
+    $('#rs-lock').title = rs.lock ? 'Proportions gardées : taper une dimension change tout dans les mêmes proportions (touche pour changer)' : 'Proportions libres : taper une dimension ne change que celle-là (touche pour changer)';
+    toast(rs.lock ? 'Proportions gardées' : 'Proportions libres : une dimension à la fois');
+  });
+  $('#rs-apply').addEventListener('click', () => { if (Math.abs(rs.sx - 1) + Math.abs(rs.sy - 1) + Math.abs(rs.sz - 1) < 1e-3) rsEnd(); else rsApply(); });
+  $('#rs-cancel').addEventListener('click', cancelResize);
+  refreshDims();
 
   /* sons */
   const syncSoundIcon = () => $('#sound-use').setAttribute('href', Sfx.isOn() ? '#i-sound-on' : '#i-sound-off');
@@ -1609,6 +2185,7 @@
   function applyDisplay() {
     const real = opts.display === 'real';
     clay.useMaterial(real ? clayReal : clayMatcap);
+    for (const p of parts) p.mesh.material = real ? partReal : partMatcap;
     lights.visible = real;
     shadowMesh.visible = opts.display !== 'eco';
     plateTex.anisotropy = opts.display === 'eco' ? 1 : Math.min(8, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1);
@@ -1618,6 +2195,7 @@
     resize();
   }
   function afterGridChange(msg) {
+    cancelResize();
     endStroke();
     undoStack.length = 0; redoStack.length = 0; refreshUndo();
     syncWorld();
@@ -1631,17 +2209,17 @@
     if (clay.resolution === target) return;
     cancelPlacement();
     clay.setWorld(WL, target);
-    afterGridChange(announce ? 'Résolution : ' + (n <= 56 ? 'éco' : n >= 112 ? 'fine' : 'normale') : '');
+    afterGridChange(announce ? 'Résolution : ' + (n <= 40 ? 'minimale' : n <= 56 ? 'éco' : n >= 144 ? 'très fine' : n >= 112 ? 'fine' : 'normale') : '');
   }
   /** Change la taille du plateau : la sculpture reste au centre, posée sur le sol */
   function applyWorld(lw, announce) {
-    if (lw === WL) return;
+    if (Math.abs(lw - WL) < 0.01) return;
     cancelPlacement();
     clay.setWorld(lw, gridSizeFor(lw, opts.res));
     syncWorld();
     buildWorld();
     goTo(Object.assign(defaultView(), { az: nearestAngle(view.az, 0) }));
-    afterGridChange(announce ? 'Plateau de ' + (lw / 10) + ' cm' + (lw > 100 ? ' : plus de place pour construire !' : '') : '');
+    afterGridChange(announce ? 'Plateau de ' + (Math.round(lw) / 10) + ' cm' + (lw > 100 ? ' : plus de place pour construire !' : '') : '');
     resize();
   }
   function applyLayout() {
@@ -1660,24 +2238,68 @@
     if (isPortrait()) opts.sideOpenP = !opts.sideOpenP; else opts.sideOpen = !opts.sideOpen;
     saveOpts(); applyLayout();
   });
+  /* préréglages de performances : un choix règle d'un coup résolution, affichage, netteté et maillage d'export */
+  const PERF = {
+    min: { label: 'Très faible', res: 40, display: 'eco', sharp: 0.6, exportQ: 'std', bool: false },
+    low: { label: 'Faible', res: 56, display: 'eco', sharp: 1, exportQ: 'std', bool: false },
+    mid: { label: 'Normal', res: 80, display: 'norm', sharp: 1, exportQ: 'dense', bool: true },
+    high: { label: 'Élevé', res: 112, display: 'real', sharp: 1, exportQ: 'dense', bool: true }
+  };
+  function applyPerf(id) {
+    const pf = PERF[id];
+    if (!pf) return;
+    opts.perf = id; opts.res = pf.res; opts.display = pf.display; opts.sharp = pf.sharp; opts.exportQ = pf.exportQ; opts.boolPreview = pf.bool;
+    saveOpts();
+    applyDisplay();
+    applyResolution(opts.res, false);
+    syncOptionsUI();
+    toast('Performances : ' + pf.label.toLowerCase() + ' (réglages appliqués)');
+  }
+  const customPerf = () => { opts.perf = 'custom'; };
   function syncOptionsUI() {
-    $$('#opt-world .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.v === WL));
+    $$('#opt-perf .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.perf));
+    $$('#opt-world .seg-btn').forEach((x) => x.classList.toggle('active', Math.abs(+x.dataset.v - WL) < 0.01));
+    const cm = $('#opt-world-cm');
+    if (document.activeElement !== cm) cm.value = String(Math.round(WL) / 10);
+    const g = ClayEngine.grid();
+    $('#world-info').textContent = 'Plateau de ' + (Math.round(WL) / 10) + ' cm : petits cubes de ' + g.H.toFixed(2) + ' mm (grille ' + g.N + '³).' +
+      (WL > 200 ? ' Plus le plateau est grand, moins la sculpture est fine : demande un appareil puissant.' : ' Un plateau plus grand permet de construire des scènes ; ta sculpture est conservée.');
     $$('#opt-ui .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.v === opts.ui));
     $$('#opt-side .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.side));
     $$('#opt-res .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.v === opts.res));
     $$('#opt-display .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.display));
+    $$('#opt-sharp .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.v === opts.sharp));
     $$('#opt-pen .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.penMode));
     $$('#opt-export .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.v === opts.exportQ));
+    $$('#opt-bool .seg-btn').forEach((x) => x.classList.toggle('active', (x.dataset.v === '1') === opts.boolPreview));
     seriesBtn.classList.toggle('active', !!opts.stampSeries);
   }
   $('#btn-options').addEventListener('click', () => { syncOptionsUI(); openModal('#modal-options'); });
+  $$('#opt-perf .seg-btn').forEach((b) => b.addEventListener('click', () => applyPerf(b.dataset.v)));
   $$('#opt-world .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.world = +b.dataset.v; saveOpts(); applyWorld(opts.world, true); syncOptionsUI(); }));
+  /** Taille du plateau choisie à la main (6 à 40 cm) */
+  function applyCustomWorld() {
+    const v = parseFloat(String($('#opt-world-cm').value).replace(',', '.'));
+    if (!(v >= 6 && v <= 40)) { toast('Choisis une taille entre 6 et 40 cm'); return; }
+    opts.world = Math.round(v * 10); saveOpts();
+    applyWorld(opts.world, true);
+    $('#opt-world-cm').blur();
+    syncOptionsUI();
+  }
+  $('#opt-world-ok').addEventListener('click', applyCustomWorld);
+  $('#opt-world-cm').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applyCustomWorld(); } });
   $$('#opt-ui .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.ui = +b.dataset.v; saveOpts(); applyLayout(); }));
   $$('#opt-side .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.side = b.dataset.v; saveOpts(); applyLayout(); }));
-  $$('#opt-res .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.res = +b.dataset.v; saveOpts(); syncOptionsUI(); applyResolution(opts.res, true); }));
-  $$('#opt-display .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.display = b.dataset.v; saveOpts(); syncOptionsUI(); applyDisplay(); }));
+  $$('#opt-res .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.res = +b.dataset.v; customPerf(); saveOpts(); syncOptionsUI(); applyResolution(opts.res, true); }));
+  $$('#opt-display .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.display = b.dataset.v; customPerf(); saveOpts(); syncOptionsUI(); applyDisplay(); }));
+  $$('#opt-sharp .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.sharp = +b.dataset.v; customPerf(); saveOpts(); syncOptionsUI(); applyDisplay(); }));
   $$('#opt-pen .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.penMode = b.dataset.v; saveOpts(); syncOptionsUI(); }));
-  $$('#opt-export .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.exportQ = b.dataset.v; saveOpts(); syncOptionsUI(); }));
+  $$('#opt-bool .seg-btn').forEach((b) => b.addEventListener('click', () => {
+    opts.boolPreview = b.dataset.v === '1'; saveOpts(); syncOptionsUI();
+    if (opts.boolPreview) schedulePreview(); else clearPreview();
+    if (placement) updateGhost();
+  }));
+  $$('#opt-export .seg-btn').forEach((b) => b.addEventListener('click', () => { opts.exportQ = b.dataset.v; customPerf(); saveOpts(); syncOptionsUI(); }));
 
   let resizeTimer = 0;
   const onResize = () => { computeFs(); clearTimeout(resizeTimer); resizeTimer = setTimeout(applyLayout, 60); resize(); };
@@ -1696,15 +2318,20 @@
     $('#print-stats').innerHTML =
       'Taille : ' + (t.size[0] / 10).toFixed(1) + ' × ' + (t.size[1] / 10).toFixed(1) + ' × ' + (t.size[2] / 10).toFixed(1) + ' cm<br>' +
       'Matière : ' + vol.toFixed(1) + ' cm³ · ' + m.nTri.toLocaleString('fr-FR') + ' triangles · fichier ≈ ' + (m.nTri * 50 / 1e6).toFixed(1) + ' Mo (grille ' + m.res + ')' +
-      (m.removed ? '<br>' + m.removed + ' petit(s) débris retiré(s) automatiquement' : '');
+      (m.removed ? '<br>' + m.removed + ' petit(s) débris retiré(s) automatiquement' : '') +
+      (m.partsCount ? '<br>' + m.partsCount + ' pièce(s) importée(s) gardée(s) telle(s) quelle(s) : ' + m.partsTri.toLocaleString('fr-FR') + ' triangles, sans lissage' : '');
   }
   $('#btn-print').addEventListener('click', () => {
     endStroke();
+    commitResize();
+    exportMm = parts.length ? 0 : (exportMm === 0 ? 80 : exportMm);          // avec des pièces importées : taille réelle (1 : 1)
+    $$('#print-sizes .seg-btn').forEach((x) => x.classList.toggle('active', +x.dataset.mm === exportMm));
     openModal('#modal-print');
     computeExport();
   });
-  function denseTarget() { return Math.min(200, Math.max(144, clay.resolution * 2)); }
-  function ultraTarget() { return Math.min(240, Math.max(200, clay.resolution * 3)); }
+  /* jamais moins fin que la sculpture elle-même */
+  function denseTarget() { return Math.max(clay.resolution, Math.min(200, Math.max(144, clay.resolution * 2))); }
+  function ultraTarget() { return Math.max(clay.resolution, Math.min(240, Math.max(200, clay.resolution * 3))); }
   const EXPORT_PLAN = () => opts.exportQ === 'ultra' ? [ultraTarget(), 18] : opts.exportQ === 'dense' ? [denseTarget(), 14] : [0, 8];
 
   /* Le calcul se fait dans un Web Worker (interface toujours fluide) ; repli sur le fil principal si indisponible. */
@@ -1713,7 +2340,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=30');
+        exportWorker = new Worker('js/exportWorker.js?v=66');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }
@@ -1733,17 +2360,18 @@
   }
   function showExport(m) {
     const st = $('#print-status');
-    if (m.nTri === 0) {
+    if (m.nTri === 0 && !parts.length) {
       st.className = 'status bad'; st.textContent = 'Il n’y a rien à imprimer : ajoute de l’argile !';
       return;
     }
+    m = withParts(m);
     exportMesh = m;
     if (m.manifold) {
-      st.className = 'status ok'; st.textContent = 'Ton objet est solide et prêt pour l’impression 3D !';
+      st.className = 'status ok'; st.textContent = m.partsCount ? 'Ton objet est prêt. Les pièces importées sont exportées exactement comme dans ton fichier (non vérifiées).' : 'Ton objet est solide et prêt pour l’impression 3D !';
     } else {
       st.className = 'status bad'; st.textContent = 'Il y a un petit souci dans la forme (' + m.problems + '). Lisse un peu et réessaie.';
     }
-    $('#dl-stl').disabled = $('#dl-obj').disabled = !m.manifold;
+    $('#dl-stl').disabled = $('#dl-obj').disabled = $('#dl-ply').disabled = !m.manifold;
     updatePrintStats();
   }
   function runExportSync() {
@@ -1753,18 +2381,19 @@
     setTimeout(() => { showExport(clay.buildExport(job.target, job.iters)); }, 30);
   }
   function computeExport() {
+    clearPreview();
     exportMesh = null;
     const st = $('#print-status');
     st.className = 'status'; st.textContent = opts.exportQ === 'std' ? 'Vérification…' : 'Calcul du maillage lisse… (quelques secondes)';
     $('#print-stats').textContent = '';
-    $('#dl-stl').disabled = $('#dl-obj').disabled = true;
+    $('#dl-stl').disabled = $('#dl-obj').disabled = $('#dl-ply').disabled = true;
     $$('#print-quality .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.q === opts.exportQ));
     const plan = EXPORT_PLAN();
     pendingExport = { id: ++exportId, target: plan[0], iters: plan[1] };
     const w = getWorker();
     if (w) {
-      const field = clay.f.slice();
-      w.postMessage({ id: pendingExport.id, field, n: clay.resolution, L: clay.world, target: plan[0], iters: plan[1] }, [field.buffer]);
+      const field = clay.f.slice(), col = clay.col.slice();
+      w.postMessage({ id: pendingExport.id, field, col, pal: clay.pal, n: clay.resolution, L: clay.world, target: plan[0], iters: plan[1] }, [field.buffer, col.buffer]);
     } else runExportSync();
   }
   $$('#print-quality .seg-btn').forEach((b) => b.addEventListener('click', () => {
@@ -1778,28 +2407,242 @@
     updatePrintStats();
   }));
   $('#dl-stl').addEventListener('click', () => { if (exportMesh) { IO.download(IO.writeSTL(exportMesh, exportMm), 'ma-sculpture.stl'); Sfx.tada(); toast('Bravo ! Ton fichier est prêt.'); } });
-  $('#dl-obj').addEventListener('click', () => { if (exportMesh) { IO.download(IO.writeOBJ(exportMesh, exportMm), 'ma-sculpture.obj'); Sfx.tada(); toast('Bravo ! Ton fichier est prêt.'); } });
+  $('#dl-obj').addEventListener('click', () => { if (exportMesh) { IO.download(IO.writeOBJ(exportMesh, exportMm), 'ma-sculpture.obj'); Sfx.tada(); toast(exportMesh.hasColors ? 'Ton OBJ est prêt, avec ses couleurs !' : 'Bravo ! Ton fichier est prêt.'); } });
+  $('#dl-ply').addEventListener('click', () => { if (exportMesh) { IO.download(IO.writePLY(exportMesh, exportMm), 'ma-sculpture.ply'); Sfx.tada(); toast('Ton PLY en couleurs est prêt !'); } });
+
+  /* ------------------------------------------------------------------ Pièces importées (maillage d'origine) et projet */
+  /* Un fichier STL / OBJ importé peut être gardé « tel quel » : ses triangles ne sont ni transformés en argile, ni lissés, ni rééchantillonnés.
+     Ils sont seulement placés (position, rotation, taille choisies), affichés, enregistrés dans le projet et exportés exactement comme ils sont. */
+  const PART_RGB = [180, 195, 214];
+  let partSeq = 1;
+  function makePart(name, soup) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(soup, 3));
+    geo.computeVertexNormals();                                  // sommets non partagés : arêtes vives conservées (facettes)
+    const mesh = new THREE.Mesh(geo, opts.display === 'real' ? partReal : partMatcap);
+    mesh.frustumCulled = false;
+    return { id: partSeq++, name, soup, mesh };
+  }
+  function addPartRaw(p) {
+    if (!p || parts.indexOf(p) >= 0) return;
+    scene.add(p.mesh); parts.push(p);
+    refreshParts(); invalidate(); saveParts();
+  }
+  function removePartRaw(p) {
+    const i = parts.indexOf(p);
+    if (i < 0) return;
+    scene.remove(p.mesh); parts.splice(i, 1);
+    refreshParts(); invalidate(); saveParts();
+  }
+  function clearParts() {
+    for (const p of parts.slice()) { removePartRaw(p); p.mesh.geometry.dispose(); }
+  }
+  /** annuler / refaire : add = pièce posée ; remove = pièce supprimée ; swap = pièce déplacée (from → to) */
+  function applyPartOp(e, undoing) {
+    if (e.partOp === 'add') { if (undoing) removePartRaw(e.part); else addPartRaw(e.part); }
+    else if (e.partOp === 'remove') { if (undoing) addPartRaw(e.part); else removePartRaw(e.part); }
+    else if (e.partOp === 'group') {                                       // redimensionnement : argile + pièces
+      if (undoing) { for (const w of e.swaps) { removePartRaw(w.to); addPartRaw(w.from); } if (e.clay) clay.undoEntry(e.clay); }
+      else { if (e.clay) clay.redoEntry(e.clay); for (const w of e.swaps) { removePartRaw(w.from); addPartRaw(w.to); } }
+    } else if (e.partOp === 'swap') {
+      if (undoing) { removePartRaw(e.to); addPartRaw(e.from); } else { removePartRaw(e.from); addPartRaw(e.to); }
+    }
+  }
+  function refreshParts() {
+    scheduleDims();
+    $('#sec-parts').hidden = parts.length === 0;
+    const box = $('#parts-list');
+    box.textContent = '';
+    for (const p of parts) {
+      const row = document.createElement('div');
+      row.className = 'part-row';
+      row.innerHTML = '<span class="part-name"><b></b><small></small></span><button class="mini mv" title="Déplacer, tourner ou redimensionner cette pièce">Déplacer</button><button class="mini sc" title="Fondre cette pièce dans l’argile pour pouvoir la sculpter (le maillage d’origine est alors remplacé par de l’argile)">Sculpter</button><button class="mini del" title="Supprimer cette pièce" aria-label="Supprimer cette pièce">&#10005;</button>';
+      row.querySelector('b').textContent = p.name;
+      row.querySelector('small').textContent = Math.round(p.soup.length / 9).toLocaleString('fr-FR') + ' triangles';
+      row.querySelector('.mv').addEventListener('click', () => editPart(p));
+      row.querySelector('.sc').addEventListener('click', () => convertPart(p));
+      row.querySelector('.del').addEventListener('click', () => { cancelPlacement(); removePartRaw(p); pushUndo({ partOp: 'remove', part: p }); toast('Pièce supprimée (Oups la rend)'); });
+      box.appendChild(row);
+    }
+  }
+  /** Fond une pièce dans l'argile (voxélisation) : elle devient modifiable avec tous les outils ; annulable (Oups) */
+  function convertPart(p) {
+    cancelPlacement(); endStroke(); commitResize();
+    clay.beginEdit();
+    clay.stampMesh(p.soup, 'add');
+    clay.relaxBox(0.5); clay.relaxBox(0.4);
+    const entry = clay.endEdit();
+    if (!entry) { toast('Cette pièce est en dehors du plateau : impossible de la fondre dans l’argile'); return; }
+    removePartRaw(p);
+    pushUndo({ partOp: 'group', clay: entry, swaps: [{ from: p, to: null }] });
+    Sfx.place(); shadowDirty = true; invalidate();
+    toast('La pièce est maintenant en argile : tu peux la sculpter (Oups pour revenir au maillage d’origine).');
+  }
+  /** Un outil de sculpture touché sur une pièce grise (plus proche que l'argile visée) : on explique pourquoi rien ne se passe */
+  let partHintT = -1e9;
+  function partInFront(e, h) {
+    const ray = rayFrom(e);
+    let hit = null;
+    for (const p of parts) {                      // grosses pièces : boîte englobante seulement (le test triangle par triangle serait trop lent)
+      let d = null;
+      if (p.soup.length > 9 * 400000) {
+        const bb = partBounds(p), pt = ray.intersectBox(new THREE.Box3(new THREE.Vector3(...bb.min), new THREE.Vector3(...bb.max)), new THREE.Vector3());
+        if (pt) d = pt.distanceTo(ray.origin);
+      } else {
+        raycaster.intersectObject(p.mesh, false).forEach((r) => { if (d === null || r.distance < d) d = r.distance; });
+      }
+      if (d !== null && (!hit || d < hit.distance)) hit = { distance: d };
+    }
+    if (!hit || (h && !h.floor && h.t < hit.distance)) return false;
+    if (h && h.floor && h.t < hit.distance) return false;
+    if (performance.now() - partHintT > 3000) {
+      partHintT = performance.now();
+      toast('Cette pièce grise garde le maillage de ton fichier : touche « Sculpter » à droite pour la fondre dans l’argile et la modifier.');
+    }
+    return true;
+  }
+  function editPart(p) {
+    cancelPlacement(); endStroke();
+    removePartRaw(p);
+    startPlacement(p.soup, p.name, true, { imported: true, replacing: p, keepPos: true });
+  }
+
+  /* enregistrement automatique des pièces (IndexedDB : bien plus de place que le stockage de la sculpture) */
+  const PartsDB = (() => {
+    const open = () => new Promise((res, rej) => {
+      try {
+        const r = indexedDB.open('pate3d', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('kv');
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      } catch (e) { rej(e); }
+    });
+    return {
+      get(key) { return open().then((db) => new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(key); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); })); },
+      set(key, val) { return open().then((db) => new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(val, key); t.oncomplete = () => res(); t.onerror = () => rej(t.error); })); }
+    };
+  })();
+  let partsSaveTimer = 0;
+  function saveParts() {
+    clearTimeout(partsSaveTimer);
+    partsSaveTimer = setTimeout(() => { PartsDB.set('parts', parts.map((p) => ({ name: p.name, soup: p.soup }))).catch(() => { /* ignore */ }); }, 700);
+  }
+
+  /* fichier projet « .pate3d » : la sculpture (grille, couleurs, palette) et les pièces importées, pour la reprendre et la modifier plus tard */
+  function f32ToB64(f) {
+    const u8 = new Uint8Array(f.buffer, f.byteOffset, f.byteLength);
+    let s = '';
+    for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+  function b64ToF32(b) {
+    const s = atob(b), u8 = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+    return new Float32Array(u8.buffer, 0, Math.floor(u8.length / 4));
+  }
+  function saveProject() {
+    endStroke();
+    commitResize();
+    const hadPreview = !!pvEntry;
+    if (hadPreview) clearPreview();                              // jamais l'aperçu dans le fichier
+    const data = {
+      format: 'pate3d-project', version: 1, app: 'Pâte3D', saved: new Date().toISOString(),
+      sculpture: clay.serialize(), paint: clay.paint,
+      parts: parts.map((p) => ({ name: p.name, soup: f32ToB64(p.soup) }))
+    };
+    if (hadPreview) schedulePreview();
+    IO.download(new Blob([JSON.stringify(data)], { type: 'application/json' }), 'ma-sculpture.pate3d');
+    Sfx.tada();
+    toast('Projet enregistré : « Ouvrir » le rouvre tel quel pour continuer à le modifier.');
+  }
+  function openProject(text) {
+    let d = null;
+    try { d = JSON.parse(text); } catch (e) { /* ignore */ }
+    if (!d || d.format !== 'pate3d-project' || typeof d.sculpture !== 'string') { toast('Ce fichier n’est pas un projet Pâte3D'); return; }
+    cancelPlacement(); endStroke();
+    try { clay.deserialize(d.sculpture); } catch (e) { toast('Ce projet est abîmé : impossible de l’ouvrir'); return; }
+    if (!clay.loadedColors) clay.col.fill(clay.paint);
+    if (Number.isFinite(d.paint)) clay.paint = clamp(d.paint | 0, 0, clay.pal.length - 1);
+    syncWorld();
+    opts.world = WL; saveOpts();                                  // le plateau du projet devient le plateau de travail
+    const wantN = gridSizeFor(WL, opts.res);                      // la résolution reste celle des options : la sculpture est rééchantillonnée
+    if (clay.resolution !== wantN) clay.setWorld(WL, wantN);
+    syncWorld();
+    buildWorld();
+    clearParts();
+    for (const pp of d.parts || []) {
+      try { addPartRaw(makePart(String(pp.name || 'Pièce').slice(0, 40), b64ToF32(pp.soup))); } catch (e) { /* pièce illisible : ignorée */ }
+    }
+    renderPalette(); pickColor(clay.paint); savePalette();
+    goTo(Object.assign(defaultView(), { az: nearestAngle(view.az, 0) }));
+    afterGridChange('Projet ouvert');
+    syncOptionsUI();
+    resize();
+  }
+  $('#btn-save').addEventListener('click', saveProject);
+
+  /** Ajoute les pièces importées, telles quelles, au maillage d'export (sommets soudés sans aucun arrondi) */
+  function withParts(m) {
+    if (!parts.length) return m;
+    const welded = parts.map((p) => IO.weldSoup(p.soup));
+    const base = m.nTri > 0;
+    let nv = base ? m.nVert : 0, ni = base ? m.indices.length : 0;
+    for (const w of welded) { nv += w.positions.length / 3; ni += w.indices.length; }
+    const pos = new Float32Array(nv * 3), idx = new Uint32Array(ni), col = new Uint8Array(nv * 3);
+    let vo = 0, io = 0, vol = 0;
+    const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    if (base) {
+      pos.set(m.positions); col.set(m.colors); idx.set(m.indices);
+      vo = m.nVert; io = m.indices.length; vol = m.volume;
+      for (let k = 0; k < 3; k++) { min[k] = m.min[k]; max[k] = m.max[k]; }
+    }
+    for (const w of welded) {
+      const wp = w.positions, wi = w.indices, nvw = wp.length / 3;
+      pos.set(wp, vo * 3);
+      for (let i = 0; i < nvw; i++) {
+        col[(vo + i) * 3] = PART_RGB[0]; col[(vo + i) * 3 + 1] = PART_RGB[1]; col[(vo + i) * 3 + 2] = PART_RGB[2];
+        for (let k = 0; k < 3; k++) { const v = wp[i * 3 + k]; if (v < min[k]) min[k] = v; if (v > max[k]) max[k] = v; }
+      }
+      for (let t = 0; t < wi.length; t += 3) {
+        const a = wi[t] * 3, b = wi[t + 1] * 3, c = wi[t + 2] * 3;
+        vol += (wp[a] * (wp[b + 1] * wp[c + 2] - wp[b + 2] * wp[c + 1]) - wp[a + 1] * (wp[b] * wp[c + 2] - wp[b + 2] * wp[c]) + wp[a + 2] * (wp[b] * wp[c + 1] - wp[b + 1] * wp[c])) / 6;
+      }
+      for (let k = 0; k < wi.length; k++) idx[io + k] = wi[k] + vo;
+      vo += nvw; io += wi.length;
+    }
+    return Object.assign({}, m, {
+      positions: pos, indices: idx, colors: col, nVert: nv, nTri: ni / 3, min, max, volume: vol, hasColors: base,
+      manifold: base ? m.manifold : true, partsCount: parts.length, partsTri: welded.reduce((a, w) => a + w.indices.length / 3, 0)
+    });
+  }
 
   /* ------------------------------------------------------------------ Démarrage */
   let loaded = false;
+  let ci = 0;
+  try { ci = parseInt(localStorage.getItem('pate3d.color') || '0', 10) || 0; } catch (e) { /* ignore */ }
   try {
     const s = localStorage.getItem('pate3d.v3') || localStorage.getItem('pate3d.v2');
     if (s) { clay.deserialize(s); loaded = true; }            // une surface vide est une sauvegarde valide
   } catch (e) { loaded = false; console.warn('Sauvegarde illisible : nouvelle sculpture', e); }
-  if (!loaded) { clay.setWorld(opts.world, gridSizeFor(opts.world, opts.res)); clay.reset(); }
+  clay.paint = clamp(ci, 0, clay.pal.length - 1);
+  if (loaded && !clay.loadedColors) clay.col.fill(clay.paint);   // ancienne sauvegarde sans couleurs : toute la sculpture prend la couleur qui était choisie
+  // les OPTIONS sont la référence (taille du plateau, résolution…) : si la sauvegarde date d'avant (ou d'un autre réglage), la sculpture est
+  // rééchantillonnée pour les respecter ; les options ne sont jamais écrasées par ce qui est chargé
+  const wantN = gridSizeFor(opts.world, opts.res);
+  if (!loaded) { clay.setWorld(opts.world, wantN); clay.reset(); }
+  else if (Math.abs(clay.world - opts.world) > 0.01 || clay.resolution !== wantN) clay.setWorld(opts.world, wantN);
   syncWorld();
-  opts.world = WL;
-  {                                              // les options suivent la grille réellement chargée (ancienne sauvegarde, autre appareil…)
-    const eq = (clay.resolution - 1) * 100 / WL + 1;
-    opts.res = [56, 80, 112].reduce((a, b) => (Math.abs(b - eq) < Math.abs(a - eq) ? b : a));
-  }
   buildWorld();
   Object.assign(view, defaultView());
-  let ci = 0;
-  try { ci = parseInt(localStorage.getItem('pate3d.color') || '0', 10) || 0; } catch (e) { /* ignore */ }
-  pickColor(clamp(ci, 0, COLORS.length - 1));
+  renderPalette();
+  pickColor(clay.paint);
   refreshUndo();
-  setSym('x', false);
+  refreshParts();
+  PartsDB.get('parts').then((list) => {
+    if (!Array.isArray(list) || parts.length) return;
+    for (const pp of list) { try { if (pp.soup && pp.soup.length >= 9) addPartRaw(makePart(String(pp.name || 'Pièce'), new Float32Array(pp.soup))); } catch (e) { /* ignore */ } }
+  }).catch(() => { /* ignore */ });
+  setSym(opts.sym, false);
   applyDisplay();
   setTool('add');
   applyLayout();
@@ -1820,7 +2663,7 @@
     clay, view, goal: view, pick, camera, renderer, opts, cursors, stampGhost, drawGizmo, gHits: () => gHits,
     dbg: () => ({ mode, ptrs: ptrs.size, queued: strokeQ.length, tool, placing: !!placement, stroke: !!stroke }),
     step: () => { if (raf) cancelAnimationFrame(raf); raf = 0; frame(performance.now()); },
-    startPlacement, getPlacement: () => placement, getStroke: () => stroke, applyWorld, gridSizeFor, zoomPos, distFromPos,
+    startPlacement, getPlacement: () => placement, getStroke: () => stroke, applyWorld, gridSizeFor, zoomPos, distFromPos, applyPerf, setTool, keyMods, parts, withParts, saveProject, openProject, getPlacementMode: () => placementMode, placementWorld,
     setPixelRatio: (v) => setPixelRatio(v, 0), getPixelRatio: () => pr, freeC
   };
 })();

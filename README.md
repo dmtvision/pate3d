@@ -15,29 +15,53 @@ Copier le dossier tel quel sur un serveur web : `index.html`, `manifest.webmanif
 - Les workers (export hors du fil principal) demandent un vrai serveur web (`http(s)://`) ; en `file://` l'export se fait sur le fil principal.
 
 ## Disposition (tous les outils sont toujours visibles)
-- **Outils principaux, à gauche** : Ajouter, Enlever, Étirer, Tirer, Lisser, Aplatir, Tampon ; sous un trait pointillé, tout en bas :
-  **Formes** et **Importer** (« objets » qu'on place au lieu de sculpter).
-- **Navigation, en haut à gauche** (carte repliable avec la flèche) : **sphère 3D XYZ** (X rouge = gauche-droite, Y vert = devant-derrière,
-  Z bleu = haut-bas, comme dans l'impression 3D) — on la **fait glisser pour tourner**, on **touche un axe pour regarder depuis cet axe** ;
-  boutons de rotation (⟲ ⟳ ∧ ∨), **curseur de zoom** + boutons loupe + **molette** (qui rapproche de l'endroit visé), vues Devant / Côté /
-  Dessus, accueil, et l'outil « Tourner à la main ».
-- **Réglages, à droite** : taille et force propres à chaque outil, 3 tailles rapides, symétrie, 8 couleurs, « Toute la forme »
-  (plus haut / bas / large / fin, tout lisser).
-- Raccourcis : 1-8 outils, `[` `]` taille, `+` `-` zoom, Ctrl+Z / Ctrl+Y, Échap (ferme / annule le placement), Entrée (valide).
+Principe : **je choisis à gauche, je règle à droite, je varie en bas.**
+- **Barre du haut** : historique (Oups, Refaire) | fichier (Nouveau, Importer) ; à droite aide, options, sons et **Imprimer 3D** (export STL / OBJ / PLY).
+- **Colonne de gauche** : **Navigation** (repliable : sphère 3D XYZ qu'on fait glisser, boutons de rotation, zoom, vues Devant / Côté / Dessus, accueil), puis les outils
+  en trois groupes titrés :
+  - **Sculpter** : Ajouter, Enlever, Élastique, Tirer, Lisser, Aplatir ;
+  - **Décorer** : Tampon, Peindre ;
+  - **Objets à poser** : Formes, Importer.
+  Toucher **Ajouter** ou **Enlever** ouvre en bas le **menu des pinceaux**, en deux groupes légendés : *Poser et retirer* (Ajouter, Enlever, Brosse, Sillon) et *Déformer*
+  (Gonfler, Pincer, Pousser, Combler). Le bouton de gauche reste allumé pour la famille du pinceau choisi.
+- **Réglages, à droite** : une pastille rappelle **l'outil actif** (icône et couleur de l'outil), puis *Taille et force* (3 tailles rapides + curseurs, propres à chaque outil),
+  *Symétrie* (l'icône montre la symétrie choisie), *Couleur* (palette + « + » ; atténuée quand l'outil ne s'en sert pas : seuls Ajouter, Brosse, Tampon, Tirer et Peindre colorent),
+  *Toute la forme* (plus haut / bas / large / fin, lisser tout).
+- **Boutons colorés** : chaque outil a sa couleur, la même dans la colonne de gauche, le menu des pinceaux et la pastille de droite.
+- En portrait, la navigation devient une carte en haut à gauche et les outils une grille en bas ; sur téléphone en paysage les titres de groupes disparaissent.
+- **Options** regroupées par thème : *Mon ordinateur* (performances, résolution, affichage, netteté), *Zone de travail*, *Interface*, *Outils* (stylet, aperçu du booléen), *Export*.
+
+## Raccourcis clavier
+| Touche | Effet |
+|---|---|
+| **Maj** (maintenue) | lisser, avec n'importe quel outil |
+| **Ctrl** (maintenue) | faire l'inverse : ajouter ↔ enlever, brosse ↔ sillon, gonfler ↔ dégonfler, pincer ↔ écarter, pousser à l'envers |
+| **Alt** + glisser | déplacer la vue |
+| **Espace** + glisser | tourner la vue |
+| flèches ou **Q Z S D** | tourner la caméra ; avec **Maj** : déplacer la vue |
+| `+` `-` (ou PageHaut / PageBas), **H** | zoom, vue de départ |
+| `1` à `7`, `8` | outils ; `8` ouvre / ferme le menu des pinceaux |
+| **F**, **X** | choisir une forme ; changer de symétrie |
+| `[` `]`, Ctrl+Z / Ctrl+Y, Échap, Entrée | taille du pinceau, annuler / refaire, fermer / annuler le placement, valider le placement |
+
+Le curseur et la surbrillance de l'outil changent pendant que Maj ou Ctrl sont tenues. Souris : clic droit ou bouton du stylet = tourner,
+molette = zoom, bouton du milieu = déplacer.
 
 ## Les outils
 | Outil | Geste |
 |---|---|
 | Ajouter (1) | glisser sur l'argile ou le plateau : l'épaisseur déposée suit la force (de très léger à épais). **Ajout propre** : la matière n'est déposée que sur de l'argile existante, rien ne dépasse derrière une partie fine, au-delà d'un bord, ni dans le vide (copies de la symétrie) ; un trait reste sur la surface où il a commencé (sculpture ou plateau) |
 | Enlever (2) | gratte / creuse (même échelle de force) |
-| Étirer (3) | attrape la matière et l'étire comme de la pâte (volume conservé) |
+| Élastique (3) | attrape la matière et la tire comme un élastique, même très loin. La sculpture d'avant le geste n'est rééchantillonnée **qu'une seule fois** (les petits pas sont composés dans une carte de déformation) : les détails fins ne sont plus détruits, il ne reste pas de morceaux détachés en l'air et il n'y a plus de lissage final de la zone. Le pied reste ancré au plateau |
 | Tirer (4) | fait sortir une corne, une queue (s'effile en s'allongeant) |
 | Lisser (5) | arrondit et adoucit |
 | Aplatir (6) | rabote ce qui dépasse d'un plan |
 | Tampon (7) | 11 motifs (boule, cube, cône, cœur, étoile, fleur, patte, lune, goutte, diamant, anneau) orientés selon la surface. **Rester appuyé et glisser règle la taille** (aperçu translucide + taille en cm) ; le bouton « Série » colle plusieurs tampons le long du geste |
 | Formes | 13 formes simples + toutes les formes de départ (voir plus bas) : **un clic sur la forme la pose** (visible en transparence, même cachée dans l'argile). **Le survol ne la déplace jamais** : on touche l'endroit où la poser (ou on la glisse ; au-delà du bord du plateau elle va au bord le plus proche), on change taille / rotation 3 axes / hauteur, « Coller » ou « Creuser », puis **Poser** (ou Entrée). Avec la symétrie, la copie « miroir » est montrée en transparence ; elle est active par défaut pour un objet posé sur la sculpture, inactive sur le plateau, et le bouton « Miroir » reprend la main. Pendant le placement, les outils sont masqués pour laisser la place à la scène |
 | Importer | fichier STL ou OBJ (bouton ou glisser-déposer), même placement que les formes |
-| Tourner (8) | un doigt = orbite, deux doigts = zoom + déplacement, double-touche = on s'approche |
+| Peindre (8) | colore la surface sans changer la forme (Ctrl : retour à la terre cuite) |
+| Pinceaux | menu du bas, ouvert par Ajouter / Enlever : **Brosse** (fine couche régulière), **Gonfler** (la surface avance le long de sa normale), **Pincer** (la matière se rassemble et monte : arête, pli), **Pousser** (déplace la matière dans le sens du geste), **Sillon** (trait fin creusé), **Combler** (remplit creux et trous sans toucher aux bosses). Ils ont chacun leur taille et leur force, la symétrie, le stylet et Ctrl (inverse) |
+| Navigation | un doigt sur le fond = orbite, deux doigts = zoom + déplacement, double-touche = on s'approche |
 
 **Pas de traînées dans la perspective.** Un trait ne peut pas « sauter » en profondeur (par exemple du bord de la sculpture au plateau
 lointain) : chaque point est comparé au précédent (déplacement dans l'espace ≤ ~4 × ce que le doigt a parcouru à l'écran), le trait reste dans
@@ -47,7 +71,7 @@ le geste du premier est annulé (sans entrer dans l'historique).
 
 **Stylet** : à pression moyenne il se comporte exactement comme la souris ; la pression module ensuite la **force** (par défaut), la **taille**,
 les deux ou rien (Options). Une paume posée juste après le stylet est ignorée, le bouton latéral du stylet fait tourner la vue, la gomme enlève.
-Le curseur (anneau + bille) apparaît au survol.
+Le curseur apparaît au survol : une bille translucide (le pinceau) et un **anneau posé sur la surface, orienté selon sa normale**, à la taille de l'empreinte.
 
 ## Formes de départ (bouton « Nouveau »)
 30 formes classées en Bases (boule, œuf, plaque), Personnages (bonhomme de neige, personnage entier avec pieds, robot), Animaux (chat,
@@ -113,7 +137,11 @@ Mesures (Chromium, 1024×768, rendu réel, gestes synthétiques de 60 événemen
   Le téléchargement n'est actif que si le test passe. Formats : STL binaire (Z vers le haut, posé à z = 0) et OBJ, à 3 / 5 / 8 / 12 cm.
 
 ## Options (icône en haut)
-Zone de travail · taille de l'interface · place des outils · résolution (Éco / Normale / Fine) · affichage (Éco : sans ombre, 1× / Normal /
+Tous les réglages sont **mémorisés sur l'ordinateur** et retrouvés à chaque ouverture ou rafraîchissement (plateau, résolution, affichage, symétrie,
+stylet, etc.) ; ce sont eux qui font foi : si la sculpture enregistrée a une autre grille, elle est rééchantillonnée pour les respecter.
+**Performances** : quatre préréglages (Très faible / Faible / Normal / Élevé) règlent d'un coup résolution (jusqu'à 40 voxels), affichage,
+netteté de l'image et maillage d'export ; chaque option reste réglable ensuite. **Plateau** : 10 / 15 / 20 cm ou **taille libre de 6 à 40 cm**
+(la finesse affichée dépend de la grille). Zone de travail · taille de l'interface · place des outils · résolution (Éco / Normale / Fine) · affichage (Éco : sans ombre, 1× / Normal /
 Réaliste) · stylet (la pression change : rien / la force / la taille / les deux) · maillage d'export par défaut. Valeurs par défaut « Éco »
 sur les appareils modestes (≤ 2 Go ou ≤ 2 cœurs).
 
@@ -130,3 +158,79 @@ démarre avec la boule. Les options sont dans `pate3d.opts`, les réglages d'out
 - `js/io.js` — parseurs STL/OBJ, formes de base et motifs, écriture STL/OBJ
 - `js/sound.js` — sons synthétisés
 - `js/app.js` — scène Three.js, textures procédurales, gestes, navigation, placement, historique, options, export
+
+## Couleurs
+Chaque voxel garde sa couleur (numéro de palette, 1 octet par voxel) : le maillage affiché porte une couleur par sommet (celle du voxel de matière
+au bout de l'arête). Ajouter, Brosse, Tampon, Tirer et les formes posées utilisent la couleur choisie ; **Peindre** colore la couche de surface
+(3 voxels) sans toucher à la forme. Élastique / Pincer / Pousser déplacent les couleurs avec la matière, Lisser / Gonfler donnent à la matière
+nouvelle la couleur de sa voisine, annuler / rétablir restaurent aussi les couleurs. Sauvegarde : `N:L|champ|couleurs|palette` (les anciennes
+sauvegardes sans couleurs prennent la couleur qui était choisie). L'export **OBJ** écrit une couleur par sommet (`v x y z r g b`) et le **PLY** aussi (Blender, MeshLab…) ; le STL n'a pas de couleurs.
+
+## Valeurs par défaut
+Plateau de **20 cm** et résolution **fine (112 voxels / 10 cm, grille plafonnée à 160³)**, sauf appareil modeste (réglages bas). Une migration
+unique (`opts.v = 3`) applique ces valeurs aux réglages déjà mémorisés ; ensuite les options de l'utilisateur font foi.
+
+## Aperçu du booléen (Coller / Creuser)
+Pendant le placement d'une forme, le résultat est calculé pour de vrai dans la sculpture (forme + copies miroir + lissage), puis annulé au coup suivant
+(`placementEdit`, `runPreview`, `clearPreview` dans app.js) : ce que l'on voit est exactement ce que « Poser » produira (vérifié : mêmes voxels).
+Un seul calcul à la fois, espacé de 3× son propre coût (80 ms au minimum) ; ~3 ms pour une forme de 32 000 triangles à 160³. Option « Aperçu du résultat
+en posant une forme » (Options ; désactivé par les préréglages « Très faible » et « Faible » et sur appareil modeste). L'aperçu n'est jamais enregistré
+(sauvegarde, export, annuler/rétablir l'annulent d'abord).
+
+## Forces, formes de départ
+Forces par défaut plus douces (0,2 à 0,35 ; une remise à zéro unique des forces enregistrées, `pate3d.toolsv`). Gonfler vise la surface *d'avant* le geste
+(le trait ne dérive plus vers la caméra) et avance de R·(0,012 + 0,1·force) par pas. « Nouveau » : option **En l'air** (la forme flotte 22 mm au-dessus du plateau,
+`Clay.reset(id, lift)`), Boule en l'air, chat / chien / cheval / ours debout sur quatre pattes, oiseau en vol. Au placement depuis une surface vide, le panneau
+s'ouvre avec toutes ses commandes (haut / bas / déplacement).
+
+## Projet, pièces importées, placement (v47)
+- **Projet `.pate3d`** (Enregistrer / Ouvrir, Ctrl+S) : JSON `{format:'pate3d-project', version:1, sculpture: <sérialisation du champ + couleurs + palette>, parts:[{name, soup: float32 en base64}]}`.
+  Rouvrir reprend le plateau du projet et rééchantillonne à la résolution des options ; vérifié : champ, couleurs, palette et pièces identiques après un aller-retour.
+- **Pièces importées = maillage d'origine** : un STL / OBJ importé est par défaut « gardé tel quel » (bouton *Garder tel quel* du panneau de placement ; *Coller* / *Creuser* le fondent dans
+  l'argile comme avant). Les triangles ne sont ni voxélisés ni lissés : seuls position, rotation et taille choisies s'appliquent (taille d'origine par défaut). Elles apparaissent en gris-bleu,
+  se déplacent (*Déplacer*) ou se suppriment dans la colonne de droite, sont annulables, enregistrées dans le projet et en IndexedDB (rechargement automatique), et sont ajoutées **telles quelles**
+  à l'export (sommets soudés bit à bit, `IO.weldSoup`) : STL/OBJ/PLY à **taille réelle 1 : 1** (bouton *Réelle*, choisi d'office quand il y a des pièces). Vérifié : écart maximal 1,7·10⁻⁶ mm
+  par rapport au STL d'origine, mêmes triangles. Les pièces ne se sculptent pas ; leur maillage n'est pas vérifié manifold. Nos OBJ (`# Clay3D…`) sont relus debout (Z haut).
+- **Placement** : nouvelle forme au centre du plateau, posée au sol, quand la surface est vide ; un cercle et un trait vertical bleus au sol montrent la position et la hauteur ;
+  on **saisit** la forme (elle suit le geste sans sauter ; sur le plateau elle glisse horizontalement, sur la sculpture elle suit la surface), on touche ailleurs pour l'y poser,
+  mode *Hauteur* (ou Maj + glisser) pour la monter / descendre.
+
+## Redimensionnement (v51)
+- **Taille de la sculpture** (colonne de droite) : dimensions L × H × P de toute la scène (argile **et** pièces importées) modifiables au clavier (cadenas = proportions gardées ou libres),
+  curseur 20–300 %, − / +, et Haut / Bas / Large / Fin. La sculpture grandit ou rétrécit **autour du milieu de son emprise sur le plateau, pied au sol** : elle reste où elle est
+  (avant, l'étirement se faisait autour du centre du plateau et décalait une sculpture placée de côté). Un cercle bleu sous elle marque ce point fixe.
+  Pendant le réglage : aperçu instantané (mise à l'échelle de l'affichage) ; **Appliquer** (ou le premier geste suivant) calcule une seule fois, avec annulation ; les pièces importées sont
+  mises à l'échelle exactement. Limite : la sculpture doit rester dans le plateau (message sinon).
+- **Forme en cours de placement** : dimensions L / H / P modifiables (cm), Maj + molette pour la taille ; la forme reste posée au sol et à sa place quand sa taille change.
+
+## Rendre une pièce importée modifiable (v55)
+Une pièce grise garde le maillage du fichier et ne se sculpte pas. Le bouton **Sculpter** de sa ligne (colonne de droite) la fond dans l'argile (voxélisation à la résolution
+courante, couleur choisie, annulable d'un « Oups » qui rend le maillage d'origine) ; « Coller » au placement fait la même chose directement. Toucher une pièce grise avec un outil
+de sculpture n'agit pas derrière elle : un message explique quoi faire.
+
+## Formes de départ simples, résolution, gros imports (v58)
+- **Formes de départ** réécrites : grosses (9 à 13 cm), peu détaillées, faites de sphères, ellipsoïdes, boîtes et cônes **épais** (aucune tige ni tube fin) pour laisser les enfants les transformer ;
+  bases géométriques (boule, œuf, cube, pilier, cône, toit, plaque), animaux debout sur de grosses pattes, objets simples.
+- **Résolution** : le plafond de la grille passe de 160³ à 256³. Par défaut (« Fine », 112 voxels / 10 cm) un plateau de 20 cm donne donc une grille de 223³ (voxel ≈ 0,9 mm, au lieu de 1,26 mm) ;
+  nouveau réglage « Très fine » (256³, ordinateur puissant) et les préréglages / résolutions plus basses restent disponibles dans les Options pour les ordinateurs modestes. Mesures à 223³ :
+  trait ≈ 0,1 ms, annuler ≈ 1 ms, maillage complet ≈ 65 ms, sauvegarde ≈ 0,3 Mo. L'export n'est jamais moins fin que la sculpture.
+- **Import** : jusqu'à **3 000 000 de triangles** (avant 500 000) ; au-delà de 400 000 triangles, pas d'aperçu du booléen et la sélection d'une pièce se fait sur sa boîte englobante.
+
+## Formes de départ lissées (v62)
+Après sa construction, chaque forme de départ reçoit un **flou gaussien de 2,6 mm** (`Clay.blurBox(sigma)`, moyennes glissantes séparables, indépendant de la résolution) : les jonctions entre les blocs (sphères,
+ellipsoïdes, cônes) disparaissent et tout est arrondi ; les parties plus fines que ~5 mm s'effacent, donc les détails minuscules (nez, antennes, bouts d'oreilles, pointes) ont été supprimés ou épaissis
+(rayons ≥ 8 mm). La rangée du sol suit celle du dessus (pas de rebord au pied), et les normales des parois au contact du plateau ne sont plus faussées par le vide sous le plateau.
+Vérifié : les 37 formes s'exportent étanches (manifold), sans débris.
+
+## Sons, guide pour tutoriels (v63)
+- Les **sons sont coupés par défaut** (`pate3d.sound` doit valoir `'1'` pour les activer, via le bouton Sons).
+- [`docs/GUIDE-IA-TUTORIELS.md`](docs/GUIDE-IA-TUTORIELS.md) : guide pour une IA (ou une personne) qui crée des tutoriels avec captures d'écran — libellés exacts et sélecteurs de
+  toute l'interface, état propre, pièges, recettes testées. [`docs/tuto-helper.js`](docs/tuto-helper.js) : aide `window.T` (nouvelle sculpture, outils, traits simulés, caméra,
+  cadres rouges numérotés, sans son).
+
+## Modèles de l'atelier, surfaces sans strates (v66)
+- **Modèles de l'atelier** (première catégorie de « Nouveau » et de « Formes ») : Fantôme, Bonhomme, Alien, Chat debout, Chat assis — les modèles STL faits à la main,
+  remis debout, tournés vers l'avant, mis à 9–11 cm, centrés et posés sur le plateau. `node tools/build-models.js` les convertit en champs de voxels compacts (`js/models.js`,
+  ~200 Ko) ; au chargement ils sont rééchantillonnés à la résolution courante puis lissés de 1,8 mm. Pour ajouter un modèle : une ligne dans `MODELS` du script, puis le relancer.
+- **Surfaces plus nettes, sans strates** : normales calculées avec un gradient de Sobel 3×3×3 (au lieu des 6 voisins) et formes collées / creusées échantillonnées 3 × 3 par colonne de
+  voxels (au lieu de 2 × 2) : les marches en escalier (« strates ») ne se voient plus dans l'éclairage. Vérifié : les 42 formes de départ s'exportent étanches.

@@ -2,3 +2,16 @@ _notes/
 sculptgl-custom/
 _t.js
 _sheet.html
+
+# fichiers privés : jamais dans le dépôt public
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.mcp.json
+.env
+.env.*
+*.pem
+*.key
+modeles-sources/
+_tmp_models/
+dwsync.xml

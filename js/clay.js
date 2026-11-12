@@ -20,6 +20,26 @@
   }
 
   /* ---------------------------------------------------------------- Échantillonnage */
+  /** Interpolation trilinéaire d'une carte à 3 composantes par voxel ; le résultat est écrit dans out[0..2] */
+  const _mo = [0, 0, 0];
+  function sampleMap(m, x, y, z, out) {
+    if (x < 0) x = 0; else if (x > N - 1) x = N - 1;
+    if (y < 0) y = 0; else if (y > N - 1) y = N - 1;
+    if (z < 0) z = 0; else if (z > N - 1) z = N - 1;
+    let i = x | 0, j = y | 0, k = z | 0;
+    if (i > N - 2) i = N - 2;
+    if (j > N - 2) j = N - 2;
+    if (k > N - 2) k = N - 2;
+    const fx = x - i, fy = y - j, fz = z - k, b = (i + j * N + k * N2) * 3, sN = N * 3, sN2 = N2 * 3;
+    for (let c = 0; c < 3; c++) {
+      const o = b + c;
+      const c00 = m[o] * (1 - fx) + m[o + 3] * fx;
+      const c10 = m[o + sN] * (1 - fx) + m[o + sN + 3] * fx;
+      const c01 = m[o + sN2] * (1 - fx) + m[o + sN2 + 3] * fx;
+      const c11 = m[o + sN + sN2] * (1 - fx) + m[o + sN + sN2 + 3] * fx;
+      out[c] = (c00 * (1 - fy) + c10 * fy) * (1 - fz) + (c01 * (1 - fy) + c11 * fy) * fz;
+    }
+  }
   function sample(f, x, y, z) {
     if (x < 0) x = 0; else if (x > N - 1) x = N - 1;
     if (y < 0) y = 0; else if (y > N - 1) y = N - 1;
@@ -43,6 +63,7 @@
   function raycast(f, ox, oy, oz, dx, dy, dz) {
     const go = [(ox + HALF) / H, (oy + FLOOR_Y) / H, (oz + HALF) / H];
     const gd = [dx / H, dy / H, dz / H];
+    if (!(go[0] + go[1] + go[2] + gd[0] + gd[1] + gd[2] === go[0] + go[1] + go[2] + gd[0] + gd[1] + gd[2])) return null;   // coordonnées invalides (NaN) : jamais de boucle sans fin
     let t0 = 0, t1 = Infinity;
     for (let a = 0; a < 3; a++) {
       const lo = 1, hi = N - 2;
@@ -55,7 +76,7 @@
         if (tb < t1) t1 = tb;
       }
     }
-    if (t0 > t1) return null;
+    if (!(t0 <= t1) || !isFinite(t1)) return null;
     const step = 0.4 * H;
     let prev = sample(f, go[0] + gd[0] * t0, go[1] + gd[1] * t0, go[2] + gd[2] * t0);
     if (prev >= ISO) return null;
@@ -221,6 +242,24 @@
     return out;
   }
 
+  /** Couleurs (une par voxel) rééchantillonnées vers une autre grille : voisin le plus proche, seulement là où il y a de la matière (champ `nf`) */
+  function resampleColors(oc, oN, oL, n, nL, nf) {
+    const o = gridParams(oN, oL), g = gridParams(n, nL);
+    const out = new Uint8Array(n * n * n);
+    const n2 = n * n, on2 = oN * oN;
+    const r = g.h / o.h, offY = (o.fy - g.fy) / o.h, offX = (oL - nL) / (2 * o.h), m = oN - 1;
+    const cl = (v) => { v = Math.round(v); return v < 0 ? 0 : v > m ? m : v; };
+    for (let k = 0; k < n; k++)
+      for (let j = 0; j < n; j++) {
+        let idx = j * n + k * n2;
+        for (let i = 0; i < n; i++, idx++) {
+          if (nf[idx] <= 0.001) continue;
+          out[idx] = oc[cl(i * r + offX) + cl(j * r + offY) * oN + cl(k * r + offX) * on2];
+        }
+      }
+    return out;
+  }
+
   /** Lissage de Taubin du maillage (λ puis μ) : lisse sans rétrécir ; la topologie (donc le manifold) est inchangée.
    *  Les sommets posés sur le plateau (y = 0) gardent leur hauteur : le dessous reste parfaitement plat. */
   function smoothMesh(pos, idx, iters, lambda, mu) {
@@ -292,8 +331,33 @@
   /* Sommet sur l'arête (ia, ib) : position (+ normale) dans vx.. */
   let vx = 0, vy = 0, vz = 0, vnx = 0, vny = 0, vnz = 0;
   function gradAt(f, idx, i, j, k, out) {
+    if (i > 0 && i < N - 1 && j > 0 && j < N - 1 && k > 0 && k < N - 1) {
+      // Sobel 3×3×3 : chaque différence est moyennée sur ses voisines (poids 1-2-1) ; au sol, la rangée du dessous est remplacée par la rangée courante
+      const ym1 = j > FK ? -N : 0;
+      let gx = 0, gy = 0, gz = 0;
+      for (let b = -1; b <= 1; b++) {
+        const yo = b < 0 ? ym1 : b * N, wb = b === 0 ? 2 : 1;
+        for (let c = -1; c <= 1; c++) {
+          const zo = c * N2, w = wb * (c === 0 ? 2 : 1), o = idx + yo + zo;
+          gx += w * (f[o - 1] - f[o + 1]);
+        }
+      }
+      for (let a = -1; a <= 1; a++) {
+        const wa = a === 0 ? 2 : 1;
+        for (let c = -1; c <= 1; c++) {
+          const w = wa * (c === 0 ? 2 : 1), o = idx + a + c * N2;
+          gy += w * (f[o + ym1] - f[o + N]);
+        }
+        for (let b = -1; b <= 1; b++) {
+          const w = wa * (b === 0 ? 2 : 1), o = idx + a + (b < 0 ? ym1 : b * N);
+          gz += w * (f[o - N2] - f[o + N2]);
+        }
+      }
+      out[0] = gx; out[1] = gy; out[2] = gz;                // = -gradient : vers l'extérieur
+      return;
+    }
     const xm = i > 0 ? f[idx - 1] : f[idx], xp = i < N - 1 ? f[idx + 1] : f[idx];
-    const ym = j > 0 ? f[idx - N] : f[idx], yp = j < N - 1 ? f[idx + N] : f[idx];
+    const ym = j > FK ? f[idx - N] : f[idx], yp = j < N - 1 ? f[idx + N] : f[idx];   // au sol : différence à sens unique (le vide sous le plateau ne doit pas pencher les normales des parois)
     const zm = k > 0 ? f[idx - N2] : f[idx], zp = k < N - 1 ? f[idx + N2] : f[idx];
     out[0] = xm - xp; out[1] = ym - yp; out[2] = zm - zp; // = -gradient : vers l'extérieur
   }
@@ -328,9 +392,10 @@
   let gen = 0;
   let tp = new Float32Array(3 * 2048);
   let tn = new Float32Array(3 * 2048);
+  let tcol = new Float32Array(3 * 2048);
   let ti = new Uint32Array(3 * 4096);
   let tc = 0, tic = 0;
-  let cF = null, cX0 = 0, cY0 = 0, cZ0 = 0;
+  let cF = null, cC = null, cPR = null, cX0 = 0, cY0 = 0, cZ0 = 0;
 
   /* Sommet de l'arête (coins ca,cb) de la cellule locale (a,b,c) ; partagé entre toutes les cellules qui la touchent */
   function chunkVert(ca, cb, a, b, c) {
@@ -352,15 +417,18 @@
     if (o + 3 > tp.length) {
       const np = new Float32Array(tp.length * 2); np.set(tp); tp = np;
       const nn = new Float32Array(tn.length * 2); nn.set(tn); tn = nn;
+      const nc = new Float32Array(tcol.length * 2); nc.set(tcol); tcol = nc;
     }
     tp[o] = (gx + t * ddx) * H - HALF; tp[o + 1] = (gy + t * ddy) * H - FLOOR_Y; tp[o + 2] = (gz + t * ddz) * H - HALF;
     tn[o] = nx / nl; tn[o + 1] = ny / nl; tn[o + 2] = nz / nl;
+    const pc = cC[fa >= ISO ? ia : ib] * 3;            // couleur du voxel de matière au bout de l'arête
+    tcol[o] = cPR[pc]; tcol[o + 1] = cPR[pc + 1]; tcol[o + 2] = cPR[pc + 2];
     edgeGen[key] = gen; edgeVal[key] = tc;
     return tc++;
   }
 
   /** Maillage d'un bloc de C×C×C cellules : balayage rapide (bits dedans/dehors + lignes entièrement pleines/vides ignorées) */
-  function buildChunk(f, cx, cy, cz) {
+  function buildChunk(f, col, pal, cx, cy, cz) {
     const x0 = cx * C, y0 = cy * C, z0 = cz * C;
     const nx = Math.min(C, N - 1 - x0) + 1, ny = Math.min(C, N - 1 - y0) + 1, nz = Math.min(C, N - 1 - z0) + 1;
     let inside = 0;
@@ -378,7 +446,7 @@
     }
     if (inside === 0 || inside === nx * ny * nz) return null;
     tc = 0; tic = 0; gen++;
-    cF = f; cX0 = x0; cY0 = y0; cZ0 = z0;
+    cF = f; cC = col; cPR = pal; cX0 = x0; cY0 = y0; cZ0 = z0;
     for (let c = 0; c < nz - 1; c++) {
       for (let b = 0; b < ny - 1; b++) {
         const r00 = rowSum[b + c * CW], r10 = rowSum[b + 1 + c * CW], r01 = rowSum[b + (c + 1) * CW], r11 = rowSum[b + 1 + (c + 1) * CW];
@@ -406,20 +474,22 @@
    *  tampon GPU perdu) ; ne réalloue que si le bloc a grandi. */
   function uploadChunk(THREE, mesh, vc, ic) {
     let geo = mesh.geometry;
-    let pa = geo.getAttribute('position'), na = geo.getAttribute('normal'), ia = geo.getIndex();
+    let pa = geo.getAttribute('position'), na = geo.getAttribute('normal'), ca = geo.getAttribute('color'), ia = geo.getIndex();
     const wide = vc >= 65536;
     if (!pa || pa.array.length < vc * 3 || ia.array.length < ic || (wide && !(ia.array instanceof Uint32Array))) {
       const capV = Math.max(256, Math.ceil(vc * 1.4)), capI = Math.max(768, Math.ceil(ic * 1.4));
       const ng = new THREE.BufferGeometry();
       pa = new THREE.BufferAttribute(new Float32Array(capV * 3), 3); pa.setUsage(THREE.DynamicDrawUsage);
       na = new THREE.BufferAttribute(new Float32Array(capV * 3), 3); na.setUsage(THREE.DynamicDrawUsage);
+      ca = new THREE.BufferAttribute(new Float32Array(capV * 3), 3); ca.setUsage(THREE.DynamicDrawUsage);
       ia = new THREE.BufferAttribute(wide ? new Uint32Array(capI) : new Uint16Array(capI), 1); ia.setUsage(THREE.DynamicDrawUsage);
-      ng.setAttribute('position', pa); ng.setAttribute('normal', na); ng.setIndex(ia);
+      ng.setAttribute('position', pa); ng.setAttribute('normal', na); ng.setAttribute('color', ca); ng.setIndex(ia);
       geo.dispose();
       mesh.geometry = geo = ng;
     }
     pa.array.set(tp.subarray(0, vc * 3)); pa.updateRange.offset = 0; pa.updateRange.count = vc * 3; pa.needsUpdate = true;
     na.array.set(tn.subarray(0, vc * 3)); na.updateRange.offset = 0; na.updateRange.count = vc * 3; na.needsUpdate = true;
+    ca.array.set(tcol.subarray(0, vc * 3)); ca.updateRange.offset = 0; ca.updateRange.count = vc * 3; ca.needsUpdate = true;
     ia.array.set(ti.subarray(0, ic)); ia.updateRange.offset = 0; ia.updateRange.count = ic; ia.needsUpdate = true;
     geo.setDrawRange(0, ic);
   }
@@ -444,6 +514,29 @@
     out[o++] = prev; out[o++] = run;
     return b64(out.subarray(0, o));
   }
+  function encodeBytes(u) {
+    const out = new Uint8Array(u.length * 2 + 2);
+    let o = 0, prev = -1, run = 0;
+    for (let i = 0; i < u.length; i++) {
+      const v = u[i];
+      if (v === prev && run < 255) run++;
+      else {
+        if (run > 0) { out[o++] = prev; out[o++] = run; }
+        prev = v; run = 1;
+      }
+    }
+    out[o++] = prev; out[o++] = run;
+    return b64(out.subarray(0, o));
+  }
+  function decodeBytes(str, u) {
+    const s = atob(str), n = u.length;
+    let p = 0;
+    for (let o = 0; o + 1 < s.length; o += 2) {
+      const v = s.charCodeAt(o), c = s.charCodeAt(o + 1);
+      for (let q = 0; q < c && p < n; q++) u[p++] = v;
+    }
+    if (p !== n) throw new Error('bad colors');
+  }
   function decode(str, f, n3) {
     const s = atob(str);
     let p = 0;
@@ -462,29 +555,144 @@
       this.before = null;
       this.box = null;
       this.group = new THREE.Group();
-      this.color = 0xe9936b;
-      this.material = new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.72, metalness: 0 });
+      this.col = new Uint8Array(N3);          // couleur de chaque voxel = numéro dans la palette
+      this.paint = 0;                         // couleur courante (numéro de palette) des outils
+      this._shc = null;                       // couleurs de l'état validé (comme _sh pour la matière)
+      this._tch = null;                       // voxels dont la couleur a été fixée par le geste en cours
+      this.loadedColors = true;
+      this.setPalette(Clay.DEFAULT_PALETTE);
+      this.material = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.72, metalness: 0 });
       this.chunks = new Array(NC * NC * NC).fill(null);
       this.dirty = new Set();
       this._tmp = null;
       this._sh = null;      // état validé de la sculpture (= « avant » du geste en cours), tenu à jour par zones
     }
 
-    setColor(hex) { this.color = hex; this.material.color.setHex(hex); }
+    /** Palette : liste de couleurs 0xRRGGBB (256 au plus) ; les numéros enregistrés dans `col` y renvoient */
+    setPalette(list) {
+      this.pal = list.slice(0, 256);
+      const rgb = new Float32Array(256 * 3), d = this.pal[0] || 0xe9936b;
+      for (let i = 0; i < 256; i++) {
+        const c = i < this.pal.length ? this.pal[i] : d;
+        rgb[i * 3] = ((c >> 16) & 255) / 255; rgb[i * 3 + 1] = ((c >> 8) & 255) / 255; rgb[i * 3 + 2] = (c & 255) / 255;
+      }
+      this._palRGB = rgb;
+    }
+    /** Couleur (numéro de palette) du voxel de matière le plus proche de (x,y,z) dans l'état bf/bc */
+    _nearCol(bf, bc, x, y, z) {
+      let i = Math.round(x), j = Math.round(y), k = Math.round(z);
+      i = i < 0 ? 0 : i > N - 1 ? N - 1 : i; j = j < 0 ? 0 : j > N - 1 ? N - 1 : j; k = k < 0 ? 0 : k > N - 1 ? N - 1 : k;
+      const idx = i + j * N + k * N2;
+      if (bf[idx] >= ISO) return bc[idx];
+      if (i > 0 && bf[idx - 1] >= ISO) return bc[idx - 1];
+      if (i < N - 1 && bf[idx + 1] >= ISO) return bc[idx + 1];
+      if (j > 0 && bf[idx - N] >= ISO) return bc[idx - N];
+      if (j < N - 1 && bf[idx + N] >= ISO) return bc[idx + N];
+      if (k > 0 && bf[idx - N2] >= ISO) return bc[idx - N2];
+      if (k < N - 1 && bf[idx + N2] >= ISO) return bc[idx + N2];
+      return bc[idx];
+    }
+    /** La matière apparue dans la boîte (lissage, gonflage…) prend la couleur de la matière voisine d'avant le geste */
+    _inherit(x0, y0, z0, x1, y1, z1) {
+      const bf = this.before || this._sh, bc = this._shc;
+      if (!bf || !bc) return;
+      const f = this.f, col = this.col, tch = this._tch;
+      x0 = Math.max(2, x0); y0 = Math.max(2, y0); z0 = Math.max(2, z0);
+      x1 = Math.min(N - 3, x1); y1 = Math.min(N - 3, y1); z1 = Math.min(N - 3, z1);
+      for (let k = z0; k <= z1; k++)
+        for (let j = y0; j <= y1; j++) {
+          let idx = x0 + j * N + k * N2;
+          for (let i = x0; i <= x1; i++, idx++) {
+            if (f[idx] < ISO || bf[idx] >= ISO || (tch && tch[idx])) continue;
+            let best = -1, bd = 99;
+            for (let dz = -2; dz <= 2; dz++)
+              for (let dy = -2; dy <= 2; dy++)
+                for (let dx = -2; dx <= 2; dx++) {
+                  const q = idx + dx + dy * N + dz * N2;
+                  if (bf[q] < ISO) continue;
+                  const d = dx * dx + dy * dy + dz * dz;
+                  if (d < bd) { bd = d; best = q; }
+                }
+            col[idx] = best >= 0 ? bc[best] : this.paint;
+          }
+        }
+    }
+    /** Peint la surface (sans toucher à la forme) : la couche de matière sous la surface, dans la sphère. idx = numéro de palette */
+    paintAt(cx, cy, cz, r, idx) {
+      const f = this.f, col = this.col;
+      const gx = (cx + HALF) / H, gy = (cy + FLOOR_Y) / H, gz = (cz + HALF) / H;
+      const R = r / H, R2 = R * R, D = 3;
+      const x0 = Math.max(D, Math.floor(gx - R)), x1 = Math.min(N - 1 - D, Math.ceil(gx + R));
+      const y0 = Math.max(Math.max(D, FK), Math.floor(gy - R)), y1 = Math.min(N - 1 - D, Math.ceil(gy + R));
+      const z0 = Math.max(D, Math.floor(gz - R)), z1 = Math.min(N - 1 - D, Math.ceil(gz + R));
+      if (x0 > x1 || y0 > y1 || z0 > z1) return false;
+      const tch = this._tch || (this._tch = new Uint8Array(N3));
+      let c0x = N, c0y = N, c0z = N, c1x = -1, c1y = -1, c1z = -1;
+      for (let k = z0; k <= z1; k++)
+        for (let j = y0; j <= y1; j++) {
+          let id = x0 + j * N + k * N2;
+          for (let i = x0; i <= x1; i++, id++) {
+            if (f[id] < ISO || col[id] === idx) continue;
+            const ex = i - gx, ey = j - gy, ez = k - gz;
+            if (ex * ex + ey * ey + ez * ez > R2) continue;
+            let shell = false;
+            for (let t = 1; t <= D && !shell; t++)
+              shell = f[id - t] < ISO || f[id + t] < ISO || f[id - t * N] < ISO || f[id + t * N] < ISO || f[id - t * N2] < ISO || f[id + t * N2] < ISO;
+            if (!shell) continue;
+            col[id] = idx; tch[id] = 1;
+            if (i < c0x) c0x = i; if (i > c1x) c1x = i;
+            if (j < c0y) c0y = j; if (j > c1y) c1y = j;
+            if (k < c0z) c0z = k; if (k > c1z) c1z = k;
+          }
+        }
+      if (c1x < 0) return false;
+      this._grow(c0x, c0y, c0z, c1x, c1y, c1z);
+      return true;
+    }
 
     /* ---- remplissage / reset ---- */
-    clear() { this.f.fill(0); this._sh = null; this.markAll(); }
+    clear() { this.f.fill(0); this.col.fill(0); this._sh = null; this._shc = null; this.markAll(); }
     /** Nouvelle sculpture à partir d'une forme de départ (voir starters.js) : 'ball' par défaut, 'empty' = surface vide */
-    reset(kind) {
+    reset(kind, lift) {
       this.f.fill(0);
-      this._sh = null;
+      this.col.fill(this.paint);               // la forme de départ est de la couleur choisie
+      this._sh = null; this._shc = null;
       this.box = null;
       if (kind === 'empty') { this.markAll(); return; }
       this.beginEdit();
       const st = global.ClayStarters && global.ClayStarters.get(kind || 'ball');
-      this.build(st ? st.ops : [['s', 0, 15, 0, 16]]);
+      if (st && st.field) {                      // modèle de l'atelier : champ de voxels enregistré (voir js/models.js)
+        this._stampField(st.field, lift || 0);
+        this.blurBox(st.blur || 1.4);
+      } else {
+        this.build(global.ClayStarters && lift ? global.ClayStarters.lifted(st ? st.ops : [['s', 0, 15, 0, 16]], lift) : (st ? st.ops : [['s', 0, 15, 0, 16]]));
+        this.blurBox(2.6);                       // formes de départ lisses : on ne voit plus les blocs qui les composent
+      }
       this.endEdit();
       this.markAll();
+    }
+    /** Ajoute un champ enregistré « n:plateau|données » (autre grille possible) : rééchantillonné à la grille courante, monté de `lift` mm */
+    _stampField(str, lift) {
+      const bar = str.indexOf('|'), head = str.slice(0, bar).split(':');
+      const n = parseInt(head[0], 10), lw = parseFloat(head[1]);
+      if (!(n >= 16 && n <= 256) || !(lw > 0)) return;
+      const src = new Float32Array(n * n * n);
+      decode(str.slice(bar + 1), src, n * n * n);
+      const out = resampleTo(src, n, lw, N, L), f = this.f, dj = Math.round(lift / H);
+      let x0 = N, y0 = N, z0 = N, x1 = -1, y1 = -1, z1 = -1;
+      for (let k = 0; k < N; k++)
+        for (let j = 0; j < N; j++) {
+          const jj = j + dj;
+          if (jj < FK || jj > N - 2) continue;
+          let o = j * N + k * N2, t = jj * N + k * N2;
+          for (let i = 0; i < N; i++, o++, t++) {
+            const v = out[o];
+            if (v <= 0.001 || v <= f[t]) continue;
+            f[t] = v;
+            if (i < x0) x0 = i; if (i > x1) x1 = i; if (jj < y0) y0 = jj; if (jj > y1) y1 = jj; if (k < z0) z0 = k; if (k > z1) z1 = k;
+          }
+        }
+      if (x1 >= 0) this._grow(x0, y0, z0, x1, y1, z1);
     }
     /** Maillage d'une forme de départ sous forme de « soupe » de triangles (9 nombres par triangle, en mm, posée sur le
      *  plateau), pour la poser comme n'importe quelle forme. Construit dans un champ temporaire de la grille courante :
@@ -525,8 +733,10 @@
     /* ---- gestion des zones modifiées ---- */
     beginEdit() {
       if (!this._sh || this._sh.length !== N3) this._sh = this.f.slice();   // seule recopie complète : la première fois
+      if (!this._shc || this._shc.length !== N3) this._shc = this.col.slice();
       this.before = this._sh;
       this.box = null;
+      this._mapZero();
     }
     _grow(x0, y0, z0, x1, y1, z1) {
       const b = this.box;
@@ -547,7 +757,7 @@
     }
     _crop(src, b) {
       const w = b.x1 - b.x0 + 1, h = b.y1 - b.y0 + 1, d = b.z1 - b.z0 + 1;
-      const out = new Float32Array(w * h * d);
+      const out = new src.constructor(w * h * d);
       let o = 0;
       for (let k = b.z0; k <= b.z1; k++)
         for (let j = b.y0; j <= b.y1; j++) {
@@ -557,41 +767,51 @@
         }
       return out;
     }
-    _paste(data, b) {
+    _paste(data, b, cdata) {
       const w = b.x1 - b.x0 + 1;
       let o = 0;
       const sh = this._sh && this._sh.length === N3 ? this._sh : null;
+      const shc = cdata && this._shc && this._shc.length === N3 ? this._shc : null;
       for (let k = b.z0; k <= b.z1; k++)
         for (let j = b.y0; j <= b.y1; j++) {
           const at = b.x0 + j * N + k * N2, row = data.subarray(o, o + w);
           this.f.set(row, at);
           if (sh) sh.set(row, at);
+          if (cdata) {
+            const crow = cdata.subarray(o, o + w);
+            this.col.set(crow, at);
+            if (shc) shc.set(crow, at);
+          }
           o += w;
         }
       this.markBox(b.x0, b.y0, b.z0, b.x1, b.y1, b.z1);
     }
     /** Recopie la zone b de la sculpture vers l'état validé */
     _syncShadow(b) {
-      const sh = this._sh, w = b.x1 - b.x0 + 1;
+      const sh = this._sh, shc = this._shc, w = b.x1 - b.x0 + 1;
       if (!sh) return;
       for (let k = b.z0; k <= b.z1; k++)
         for (let j = b.y0; j <= b.y1; j++) {
           const at = b.x0 + j * N + k * N2;
           sh.set(this.f.subarray(at, at + w), at);
+          if (shc) shc.set(this.col.subarray(at, at + w), at);
+          if (this._tch) this._tch.fill(0, at, at + w);
         }
     }
     /** Termine une édition ; retourne une entrée d'historique (ou null) */
     endEdit() {
       const b = this.box;
       this.box = null;
+      this._mapZero();
       if (!b) { this.before = null; return null; }
-      const entry = { box: b, before: this._crop(this._sh, b), after: this._crop(this.f, b) };
+      const entry = { box: b, before: this._crop(this._sh, b), after: this._crop(this.f, b),
+        cbefore: this._shc ? this._crop(this._shc, b) : null, cafter: this._crop(this.col, b) };
       this._syncShadow(b);
       this.before = null;
       return entry;
     }
-    undoEntry(e) { this._paste(e.before, e.box); }
-    redoEntry(e) { this._paste(e.after, e.box); }
+    undoEntry(e) { this._paste(e.before, e.box, e.cbefore); }
+    redoEntry(e) { this._paste(e.after, e.box, e.cafter); }
 
     /* ---- pinceaux ---- */
     /** Capsule (sphère balayée) en coordonnées monde. mode: 'add' | 'remove'.
@@ -614,6 +834,7 @@
       const lim = (R + 1) * (R + 1);
       const add = mode === 'add';
       const src = add && sup ? (this.before || this._sh || f) : null;   // l'argile « d'avant » sert de support
+      const col = this.col, pn = this.paint, tch = add ? (this._tch || (this._tch = new Uint8Array(N3))) : null;
       let snx = 0, sny = 0, snz = 0, steps = 0, wb = 0, wi = 0, wj = 0, wk = 0, wLo = -Infinity;
       const SL = 1;                                                     // pas de la marche vers le bas, en voxels
       if (src) {
@@ -654,6 +875,7 @@
                   if (!ok) continue;
                 }
                 f[idx] = (j === FK && b >= ISO) ? 1 : b;
+                if (b >= ISO) { col[idx] = pn; tch[idx] = 1; }
               }
             } else {
               const nb = 1 - b;
@@ -666,7 +888,7 @@
     }
 
     /** Lissage local (flou) */
-    smooth(cx, cy, cz, r, strength) {
+    smooth(cx, cy, cz, r, strength, fillOnly) {
       const f = this.f;
       const gx = (cx + HALF) / H, gy = (cy + FLOOR_Y) / H, gz = (cz + HALF) / H;
       const R = r / H;
@@ -688,7 +910,8 @@
             const v = f[idx];
             if (q >= 1) { tmp[o] = v; continue; }
             const avg = (f[idx - 1] + f[idx + 1] + f[idx - N] + f[idx + N] + f[idx - N2] + f[idx + N2]) / 6;
-            tmp[o] = v + strength * (1 - q) * (avg - v);
+            const nv = v + strength * (1 - q) * (avg - v);
+            tmp[o] = fillOnly && nv < v ? v : nv;      // « combler » : on ne retire jamais de matière
           }
       o = 0;
       for (let k = z0; k <= z1; k++)
@@ -699,46 +922,129 @@
             if (j === FK && v >= ISO) v = 1;
             f[idx] = v;
           }
+      this._inherit(x0, y0, z0, x1, y1, z1);
       this._grow(x0, y0, z0, x1, y1, z1);
     }
 
-    /** Déplace la matière autour d'un point (déformation douce, comme de la pâte qu'on étire).
-     *  (cx,cy,cz) : position précédente du doigt, (dx,dy,dz) : déplacement, r : rayon (monde). */
-    grab(cx, cy, cz, dx, dy, dz, r) {
-      const f = this.f;
-      if (!this._src || this._src.length !== N3) { this._src = new Float32Array(N3); this._src.set(f); }
-      const src = this._src;
-      const mx = (cx + dx / 2 + HALF) / H, my = (cy + dy / 2 + FLOOR_Y) / H, mz = (cz + dz / 2 + HALF) / H;
-      const gx = dx / H, gy = dy / H, gz = dz / H;
+    /* ---- déformations « élastiques » (élastique, pincer, pousser) ----
+     * Chaque petit pas de déformation est composé dans une carte (déplacement de la position source, par voxel) puis la
+     * sculpture D'AVANT le geste est rééchantillonnée UNE seule fois avec la carte cumulée : le flou ne s'accumule plus,
+     * les petits détails survivent aux longs étirements et la matière reste d'un seul tenant. */
+    _mapZero() {
+      const b = this._mapBox, m = this._map;
+      this._mapBox = null;
+      if (!m || !b) return;
+      const w = (b.x1 - b.x0 + 1) * 3;
+      for (let k = b.z0; k <= b.z1; k++)
+        for (let j = b.y0; j <= b.y1; j++) m.fill(0, (b.x0 + j * N + k * N2) * 3, (b.x0 + j * N + k * N2) * 3 + w);
+    }
+    /** kind 0 : déplacement (p0..p2 en mm) ; kind 1 : pincement vers (cx,cy,cz), n = (p0,p1,p2), p3 = intensité (négative : écarte) */
+    _warp(kind, cx, cy, cz, r, p0, p1, p2, p3) {
+      const f = this.f, bf = this.before || this._sh || f;
+      const col = this.col, bc = this._shc || col, tch = this._tch || (this._tch = new Uint8Array(N3));
+      if (!this._map || this._map.length !== N3 * 3) { this._map = new Float32Array(N3 * 3); this._mapBox = null; }
+      const map = this._map;
+      const gx = (cx + HALF) / H, gy = (cy + FLOOR_Y) / H, gz = (cz + HALF) / H;
       const R = r / H, R2 = R * R;
-      const x0 = Math.max(1, Math.floor(mx - R)), x1 = Math.min(N - 2, Math.ceil(mx + R));
-      const y0 = Math.max(FK, Math.floor(my - R)), y1 = Math.min(N - 2, Math.ceil(my + R));
-      const z0 = Math.max(1, Math.floor(mz - R)), z1 = Math.min(N - 2, Math.ceil(mz + R));
+      const x0 = Math.max(1, Math.floor(gx - R)), x1 = Math.min(N - 2, Math.ceil(gx + R));
+      const y0 = Math.max(FK, Math.floor(gy - R)), y1 = Math.min(N - 2, Math.ceil(gy + R));
+      const z0 = Math.max(1, Math.floor(gz - R)), z1 = Math.min(N - 2, Math.ceil(gz + R));
       if (x0 > x1 || y0 > y1 || z0 > z1) return;
-      // copie de la seule zone utile (+ marge) dans le tampon source
-      {
-        const mg = Math.ceil(Math.hypot(gx, gy, gz)) + 3;
-        const sx0 = Math.max(0, x0 - mg), sx1 = Math.min(N - 1, x1 + mg);
-        for (let k = Math.max(0, z0 - mg); k <= Math.min(N - 1, z1 + mg); k++)
-          for (let j = Math.max(0, y0 - mg); j <= Math.min(N - 1, y1 + mg); j++) {
-            const o = sx0 + j * N + k * N2;
-            src.set(f.subarray(o, o + sx1 - sx0 + 1), o);
+      const cnt = (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+      if (!this._wu || this._wu.length < cnt * 3) { this._wu = new Float32Array(cnt * 3); this._wv = new Float32Array(cnt); }
+      const tu = this._wu, tv = this._wv, mo = _mo;
+      const Dx = kind === 0 ? p0 / H : 0, Dy = kind === 0 ? p1 / H : 0, Dz = kind === 0 ? p2 / H : 0;
+      let o = 0;
+      for (let k = z0; k <= z1; k++)
+        for (let j = y0; j <= y1; j++)
+          for (let i = x0; i <= x1; i++, o++) {
+            const ex = i - gx, ey = j - gy, ez = k - gz;
+            const q = (ex * ex + ey * ey + ez * ez) / R2;
+            if (q >= 1) { tv[o] = -1; continue; }
+            let ux, uy, uz;
+            if (kind === 0) {                       // inverse approchée de x -> x + D·w : deux itérations de point fixe
+              let yx = i, yy = j, yz = k, wy = (1 - q) * (1 - q);
+              for (let it = 0; it < 2; it++) {
+                yx = i - Dx * wy; yy = j - Dy * wy; yz = k - Dz * wy;
+                const fx = yx - gx, fy = yy - gy, fz = yz - gz, qy = (fx * fx + fy * fy + fz * fz) / R2;
+                wy = qy < 1 ? (1 - qy) * (1 - qy) : 0;
+              }
+              ux = -Dx * wy; uy = -Dy * wy; uz = -Dz * wy;
+            } else {                                // pincement : on prélève plus loin dans le plan de la surface
+              const w = (1 - q) * (1 - q), dn = ex * p0 + ey * p1 + ez * p2, lift = p3 * 0.5 * R * w;   // la matière se rassemble ET monte : une arête
+              ux = p3 * w * (ex - dn * p0) - lift * p0; uy = p3 * w * (ey - dn * p1) - lift * p1; uz = p3 * w * (ez - dn * p2) - lift * p2;
+            }
+            sampleMap(map, i + ux, j + uy, k + uz, mo);          // carte cumulée à la position source de ce pas
+            const vx = ux + mo[0], vy = uy + mo[1], vz = uz + mo[2];
+            tu[o * 3] = vx; tu[o * 3 + 1] = vy; tu[o * 3 + 2] = vz;
+            let sy = j + vy; if (sy < FK) sy = FK;               // on ne puise jamais sous le plateau
+            tv[o] = sample(bf, i + vx, sy, k + vz);
           }
-      }
-      for (let k = z0; k <= z1; k++) {
+      o = 0;
+      for (let k = z0; k <= z1; k++)
         for (let j = y0; j <= y1; j++) {
           let idx = x0 + j * N + k * N2;
-          for (let i = x0; i <= x1; i++, idx++) {
-            const ex = i - mx, ey = j - my, ez = k - mz;
-            const q = (ex * ex + ey * ey + ez * ez) / R2;
-            if (q >= 1) continue;
-            const w = (1 - q) * (1 - q);
-            let v = sample(src, i - gx * w, j - gy * w, k - gz * w);
-            if (j === FK && v >= ISO) v = 1;
-            f[idx] = v;
+          for (let i = x0; i <= x1; i++, idx++, o++) {
+            const v = tv[o];
+            if (v < 0) continue;
+            map[idx * 3] = tu[o * 3]; map[idx * 3 + 1] = tu[o * 3 + 1]; map[idx * 3 + 2] = tu[o * 3 + 2];
+            f[idx] = (j === FK && v >= ISO) ? 1 : v;
+            if (v >= ISO) {                                      // la couleur vient de la même position source que la matière
+              let sy = j + tu[o * 3 + 1]; if (sy < FK) sy = FK;
+              col[idx] = this._nearCol(bf, bc, i + tu[o * 3], sy, k + tu[o * 3 + 2]); tch[idx] = 1;
+            }
           }
         }
+      const mb = this._mapBox;
+      if (!mb) this._mapBox = { x0, y0, z0, x1, y1, z1 };
+      else {
+        if (x0 < mb.x0) mb.x0 = x0; if (y0 < mb.y0) mb.y0 = y0; if (z0 < mb.z0) mb.z0 = z0;
+        if (x1 > mb.x1) mb.x1 = x1; if (y1 > mb.y1) mb.y1 = y1; if (z1 > mb.z1) mb.z1 = z1;
       }
+      this._grow(x0, y0, z0, x1, y1, z1);
+    }
+    /** Déplace la matière autour de (cx,cy,cz) de (dx,dy,dz) mm, avec un rayon r (mm) : élastique, pousser */
+    warpGrab(cx, cy, cz, dx, dy, dz, r) { this._warp(0, cx, cy, cz, r, dx, dy, dz, 0); }
+    /** Pince la matière vers le point (cx,cy,cz) dans le plan de normale n ; amount négatif : écarte */
+    warpPinch(cx, cy, cz, nx, ny, nz, r, amount) { this._warp(1, cx, cy, cz, r, nx, ny, nz, amount); }
+
+    /** Gonfle (amount > 0, mm) ou dégonfle (< 0) la surface autour d'un point : elle avance le long de sa normale. */
+    inflate(cx, cy, cz, r, amount) {
+      const f = this.f;
+      const gx = (cx + HALF) / H, gy = (cy + FLOOR_Y) / H, gz = (cz + HALF) / H;
+      const R = r / H, R2 = R * R;
+      const x0 = Math.max(2, Math.floor(gx - R) - 1), x1 = Math.min(N - 3, Math.ceil(gx + R) + 1);
+      const y0 = Math.max(FK + 1, Math.floor(gy - R) - 1), y1 = Math.min(N - 3, Math.ceil(gy + R) + 1);
+      const z0 = Math.max(2, Math.floor(gz - R) - 1), z1 = Math.min(N - 3, Math.ceil(gz + R) + 1);
+      if (x0 > x1 || y0 > y1 || z0 > z1) return;
+      const steps = Math.max(1, Math.ceil(Math.abs(amount) / H / 0.45)), s = amount / H / steps;
+      const cnt = (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+      if (!this._tmp || this._tmp.length < cnt) this._tmp = new Float32Array(cnt);
+      const tmp = this._tmp;
+      for (let st = 0; st < steps; st++) {
+        let o = 0;
+        for (let k = z0; k <= z1; k++)
+          for (let j = y0; j <= y1; j++) {
+            let idx = x0 + j * N + k * N2;
+            for (let i = x0; i <= x1; i++, idx++, o++) {
+              const ex = i - gx, ey = j - gy, ez = k - gz, q = (ex * ex + ey * ey + ez * ez) / R2;
+              const v = f[idx];
+              if (q >= 1) { tmp[o] = v; continue; }
+              const gxx = f[idx + 1] - f[idx - 1], gyy = f[idx + N] - f[idx - N], gzz = f[idx + N2] - f[idx - N2];
+              const gl = Math.sqrt(gxx * gxx + gyy * gyy + gzz * gzz);
+              if (gl < 1e-3) { tmp[o] = v; continue; }
+              const w = (1 - q) * (1 - q) * s / gl;       // la surface avance de s·w voxels le long de la normale (−∇f)
+              tmp[o] = sample(f, i + gxx * w, j + gyy * w, k + gzz * w);
+            }
+          }
+        o = 0;
+        for (let k = z0; k <= z1; k++)
+          for (let j = y0; j <= y1; j++) {
+            let idx = x0 + j * N + k * N2;
+            for (let i = x0; i <= x1; i++, idx++, o++) f[idx] = tmp[o];
+          }
+      }
+      this._inherit(x0, y0, z0, x1, y1, z1);
       this._grow(x0, y0, z0, x1, y1, z1);
     }
 
@@ -772,7 +1078,59 @@
     }
 
     /** Étire / écrase toute la sculpture (facteurs sx, sy, sz) en gardant le pied posé au sol. */
-    scaleAbout(sx, sy, sz) {
+    scaleAbout(sx, sy, sz, ax, az) {
+      const f = this.f;
+      // seuls les blocs qui portent une surface (ou en attente de maillage) peuvent contenir les extrémités : on ne balaie que leur boîte
+      let ca = NC, cb = -1, cc = NC, cd = -1, ce = NC, cf = -1;
+      for (let id = 0; id < this.chunks.length; id++) {
+        const m = this.chunks[id];
+        if (!((m && m.visible) || this.dirty.has(id))) continue;
+        const cx = id % NC, cy = Math.floor(id / NC) % NC, cz = Math.floor(id / (NC * NC));
+        if (cx < ca) ca = cx; if (cx > cb) cb = cx; if (cy < cc) cc = cy; if (cy > cd) cd = cy; if (cz < ce) ce = cz; if (cz > cf) cf = cz;
+      }
+      if (cb < 0) return null;
+      const X0 = ca * C, X1 = Math.min(N - 1, (cb + 1) * C), Y0 = cc * C, Y1 = Math.min(N - 1, (cd + 1) * C), Z0 = ce * C, Z1 = Math.min(N - 1, (cf + 1) * C);
+      let x0 = N, y0 = N, z0 = N, x1 = -1, y1 = -1, z1 = -1;
+      for (let k = Z0; k <= Z1; k++)
+        for (let j = Y0; j <= Y1; j++) {
+          const o = j * N + k * N2;
+          for (let i = X0; i <= X1; i++) {
+            if (f[o + i] >= ISO) {
+              if (i < x0) x0 = i; if (i > x1) x1 = i;
+              if (j < y0) y0 = j; if (j > y1) y1 = j;
+              if (k < z0) z0 = k; if (k > z1) z1 = k;
+            }
+          }
+        }
+      if (x1 < 0) return false;
+      const cx = ax === undefined ? (N - 1) / 2 : ax, cz = az === undefined ? (N - 1) / 2 : az, cy = FK - 0.5;   // ancre (grille) : par défaut le milieu du plateau
+      const lo = (a, c, s) => Math.min(a, c + (a - c) * s);
+      const hi = (a, c, s) => Math.max(a, c + (a - c) * s);
+      const bx0 = Math.max(1, Math.floor(Math.min(lo(x0, cx, sx), x0) - 3)), bx1 = Math.min(N - 2, Math.ceil(Math.max(hi(x1, cx, sx), x1) + 3));
+      const by0 = Math.max(FK, Math.floor(Math.min(lo(y0, cy, sy), y0) - 3)), by1 = Math.min(N - 2, Math.ceil(Math.max(hi(y1, cy, sy), y1) + 3));
+      const bz0 = Math.max(1, Math.floor(Math.min(lo(z0, cz, sz), z0) - 3)), bz1 = Math.min(N - 2, Math.ceil(Math.max(hi(z1, cz, sz), z1) + 3));
+      const src = this._src || (this._src = new Float32Array(N3));
+      src.set(f);
+      const srcC = this._srcC || (this._srcC = new Uint8Array(N3));
+      srcC.set(this.col);
+      for (let k = bz0; k <= bz1; k++)
+        for (let j = by0; j <= by1; j++) {
+          let idx = bx0 + j * N + k * N2;
+          for (let i = bx0; i <= bx1; i++, idx++) {
+            let v = sample(src, cx + (i - cx) / sx, cy + (j - cy) / sy, cz + (k - cz) / sz);
+            if (j === FK && v >= ISO) v = 1;
+            f[idx] = v;
+            if (v >= ISO) this.col[idx] = this._nearCol(src, srcC, cx + (i - cx) / sx, cy + (j - cy) / sy, cz + (k - cz) / sz);
+          }
+        }
+      this._grow(bx0, by0, bz0, bx1, by1, bz1);
+      return true;
+    }
+
+    /** Pareil, avec l'ancre en coordonnées monde (mm) : la sculpture grandit ou rétrécit autour de ce point du plateau, pied posé au sol */
+    scaleAboutWorld(sx, sy, sz, wx, wz) { return this.scaleAbout(sx, sy, sz, (wx + HALF) / H, (wz + HALF) / H); }
+    /** Boîte englobante de la matière en mm : {min:[x,y,z], max:[x,y,z]} ou null si la sculpture est vide */
+    bounds() {
       const f = this.f;
       let x0 = N, y0 = N, z0 = N, x1 = -1, y1 = -1, z1 = -1;
       for (let k = 0; k < N; k++)
@@ -786,26 +1144,11 @@
             }
           }
         }
-      if (x1 < 0) return false;
-      const cx = (N - 1) / 2, cz = (N - 1) / 2, cy = FK - 0.5;
-      const lo = (a, c, s) => Math.min(a, c + (a - c) * s);
-      const hi = (a, c, s) => Math.max(a, c + (a - c) * s);
-      const bx0 = Math.max(1, Math.floor(Math.min(lo(x0, cx, sx), x0) - 3)), bx1 = Math.min(N - 2, Math.ceil(Math.max(hi(x1, cx, sx), x1) + 3));
-      const by0 = Math.max(FK, Math.floor(Math.min(lo(y0, cy, sy), y0) - 3)), by1 = Math.min(N - 2, Math.ceil(Math.max(hi(y1, cy, sy), y1) + 3));
-      const bz0 = Math.max(1, Math.floor(Math.min(lo(z0, cz, sz), z0) - 3)), bz1 = Math.min(N - 2, Math.ceil(Math.max(hi(z1, cz, sz), z1) + 3));
-      const src = this._src || (this._src = new Float32Array(N3));
-      src.set(f);
-      for (let k = bz0; k <= bz1; k++)
-        for (let j = by0; j <= by1; j++) {
-          let idx = bx0 + j * N + k * N2;
-          for (let i = bx0; i <= bx1; i++, idx++) {
-            let v = sample(src, cx + (i - cx) / sx, cy + (j - cy) / sy, cz + (k - cz) / sz);
-            if (j === FK && v >= ISO) v = 1;
-            f[idx] = v;
-          }
-        }
-      this._grow(bx0, by0, bz0, bx1, by1, bz1);
-      return true;
+      if (x1 < 0) return null;
+      return {
+        min: [(x0 - 0.5) * H - HALF, Math.max(0, (y0 - 0.5) * H - FLOOR_Y), (z0 - 0.5) * H - HALF],
+        max: [(x1 + 0.5) * H - HALF, (y1 + 0.5) * H - FLOOR_Y, (z1 + 0.5) * H - HALF]
+      };
     }
 
     /* ---- primitives à distance signée (formes de départ) ---- */
@@ -824,7 +1167,7 @@
             if (sd > 1.1) continue;
             let b = 0.5 - sd * 0.5;
             b = b < 0 ? 0 : b > 1 ? 1 : b;
-            if (add) { if (b > f[idx]) f[idx] = (j === FK && b >= ISO) ? 1 : b; }
+            if (add) { if (b > f[idx]) { f[idx] = (j === FK && b >= ISO) ? 1 : b; if (b >= ISO) this.col[idx] = this.paint; } }
             else { const nb = 1 - b; if (nb < f[idx]) f[idx] = (j === FK && nb >= ISO) ? 1 : nb; }
           }
         }
@@ -930,13 +1273,50 @@
             if (j === FK && v >= ISO) v = 1;
             f[i + j * N + k * N2] = v;
           }
+      this._inherit(x0, y0, z0, x1, y1, z1);
       this.markBox(x0, y0, z0, x1, y1, z1);
+    }
+
+    /** Flou gaussien de la zone modifiée (écart-type sigma en mm, indépendant de la résolution) : estompe les jonctions entre les blocs de
+     *  construction (sphères, ellipsoïdes…) et arrondit tout ; les parties plus fines que ~2·sigma s'effacent. Le sol reste plat. */
+    blurBox(sigma) {
+      const b = this.box;
+      const sv = sigma / H;
+      if (!b || sv < 0.5) return;
+      const pad = Math.ceil(3 * sv) + 2;
+      const x0 = Math.max(0, b.x0 - pad), x1 = Math.min(N - 1, b.x1 + pad);
+      const y0 = Math.max(FK, b.y0 - pad), y1 = Math.min(N - 1, b.y1 + pad);
+      const z0 = Math.max(0, b.z0 - pad), z1 = Math.min(N - 1, b.z1 + pad);
+      const r = Math.max(1, Math.round((Math.sqrt(6 * sv * sv + 1) - 1) / 2));      // deux passes de moyenne glissante par axe
+      const f = this.f, w = 2 * r + 1;
+      const L = Math.max(x1 - x0, y1 - y0, z1 - z0) + 1;
+      const line = new Float32Array(L), out = new Float32Array(L);
+      const pass = (start, count, stride, base) => {                                 // moyenne glissante sur une ligne, bords prolongés
+        for (let i = 0; i < count; i++) line[i] = f[base + (start + i) * stride];
+        let sum = 0;
+        for (let k = -r; k <= r; k++) sum += line[Math.min(count - 1, Math.max(0, k))];
+        for (let i = 0; i < count; i++) {
+          out[i] = sum / w;
+          sum += line[Math.min(count - 1, i + r + 1)] - line[Math.max(0, i - r)];
+        }
+        for (let i = 0; i < count; i++) f[base + (start + i) * stride] = out[i];
+      };
+      for (let it = 0; it < 2; it++) {
+        for (let k = z0; k <= z1; k++) for (let j = y0; j <= y1; j++) pass(x0, x1 - x0 + 1, 1, j * N + k * N2);
+        for (let k = z0; k <= z1; k++) for (let i = x0; i <= x1; i++) pass(y0, y1 - y0 + 1, N, i + k * N2);
+        for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) pass(z0, z1 - z0 + 1, N2, i + j * N);
+      }
+      for (let k = z0; k <= z1; k++) {
+        const o = FK * N + k * N2;
+        for (let i = x0; i <= x1; i++) f[o + i] = f[o + i + N];                      // la rangée du sol suit celle du dessus : pas de rebord ni de normales faussées (le dessous reste plat à moins de 0,1 mm)
+      }
+      this._grow(x0, y0, z0, x1, y1, z1);
     }
 
     /** Colle (add) ou creuse (remove) un maillage "soupe de triangles" en coordonnées monde. */
     stampMesh(pos, mode) {
       const nT = Math.floor(pos.length / 9);
-      const S = N * 2;
+      const SS = 3, S = N * SS;                     // sous-échantillons par voxel (en x et en z)
       const cols = new Array(S * S);
       const EPX = 0.000137, EPZ = 0.000091;
       let bx0 = N, by0 = N, bz0 = N, bx1 = -1, by1 = -1, bz1 = -1;
@@ -949,12 +1329,12 @@
         if (Math.abs(den) < 1e-9) continue;
         const minx = Math.min(ax, bx, cx), maxx = Math.max(ax, bx, cx);
         const minz = Math.min(az, bz, cz), maxz = Math.max(az, bz, cz);
-        const s0 = Math.max(0, Math.ceil((minx + 0.25) * 2)), s1 = Math.min(S - 1, Math.floor((maxx + 0.25) * 2));
-        const r0 = Math.max(0, Math.ceil((minz + 0.25) * 2)), r1 = Math.min(S - 1, Math.floor((maxz + 0.25) * 2));
+        const s0 = Math.max(0, Math.ceil((minx + 0.5) * SS - 0.5)), s1 = Math.min(S - 1, Math.floor((maxx + 0.5) * SS - 0.5));
+        const r0 = Math.max(0, Math.ceil((minz + 0.5) * SS - 0.5)), r1 = Math.min(S - 1, Math.floor((maxz + 0.5) * SS - 0.5));
         for (let r = r0; r <= r1; r++) {
-          const z = r * 0.5 - 0.25 + EPZ;
+          const z = (r + 0.5) / SS - 0.5 + EPZ;
           for (let s = s0; s <= s1; s++) {
-            const x = s * 0.5 - 0.25 + EPX;
+            const x = (s + 0.5) / SS - 0.5 + EPX;
             const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / den;
             const l2 = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / den;
             const l3 = 1 - l1 - l2;
@@ -971,7 +1351,7 @@
         if (!arr) continue;
         arr.sort((p, q) => p - q);
         const s = key % S, r = (key - s) / S;
-        const i = s >> 1, k = r >> 1;
+        const i = Math.floor(s / SS), k = Math.floor(r / SS);
         if (i < 1 || i > N - 2 || k < 1 || k > N - 2) continue;
         for (let m = 0; m + 1 < arr.length; m += 2) {
           const y0 = arr[m], y1 = arr[m + 1];
@@ -979,7 +1359,7 @@
           for (let j = j0; j <= j1; j++) {
             const ov = Math.min(y1, j + 0.5) - Math.max(y0, j - 0.5);
             if (ov > 0) {
-              acc[i + j * N + k * N2] += 0.25 * ov;
+              acc[i + j * N + k * N2] += ov / (SS * SS);
               if (i < bx0) bx0 = i; if (i > bx1) bx1 = i;
               if (j < by0) by0 = j; if (j > by1) by1 = j;
               if (k < bz0) bz0 = k; if (k > bz1) bz1 = k;
@@ -988,7 +1368,7 @@
         }
       }
       if (bx1 < 0) return false;
-      const f = this.f, add = mode === 'add';
+      const f = this.f, add = mode === 'add', tch = this._tch || (this._tch = new Uint8Array(N3));
       for (let k = bz0; k <= bz1; k++)
         for (let j = by0; j <= by1; j++) {
           let idx = bx0 + j * N + k * N2;
@@ -996,7 +1376,7 @@
             let a = acc[idx];
             if (a <= 0) continue;
             if (a > 1) a = 1;
-            if (add) { if (a > f[idx]) f[idx] = (j === FK && a >= ISO) ? 1 : a; }
+            if (add) { if (a > f[idx]) { f[idx] = (j === FK && a >= ISO) ? 1 : a; if (a >= ISO) { this.col[idx] = this.paint; tch[idx] = 1; } } }
             else { const nb = 1 - a; if (nb < f[idx]) f[idx] = (j === FK && nb >= ISO) ? 1 : nb; }
           }
         }
@@ -1024,7 +1404,7 @@
       const THREE = this.THREE;
       for (const id of this.dirty) {
         const cx = id % NC, cy = Math.floor(id / NC) % NC, cz = Math.floor(id / (NC * NC));
-        const g = buildChunk(this.f, cx, cy, cz);
+        const g = buildChunk(this.f, this.col, this._palRGB, cx, cy, cz);
         let mesh = this.chunks[id];
         if (!g) {
           if (mesh) mesh.visible = false;
@@ -1044,27 +1424,36 @@
     }
 
     /* ---- sauvegarde ---- */
-    serialize() { return N + ':' + L + '|' + encode(this.f); }
+    serialize() { return N + ':' + L + '|' + encode(this.f) + '|' + encodeBytes(this.col) + '|' + this.pal.join(','); }
     deserialize(str) {
-      let n = 80, lw = 100;
+      let n = 80, lw = 100, cstr = null, pstr = null;
       const bar = str.indexOf('|');
       if (bar > 0) {
-        const head = str.slice(0, bar).split(':');
+        const parts = str.split('|');
+        const head = parts[0].split(':');
         n = parseInt(head[0], 10);
         if (head[1]) lw = parseFloat(head[1]);
-        str = str.slice(bar + 1);
+        str = parts[1]; cstr = parts[2] || null; pstr = parts[3] || null;
       }
       if (!(n >= 32 && n <= 256) || !(lw >= 50 && lw <= 400)) throw new Error('bad grid');
       const tmp = new Float32Array(n * n * n);
       decode(str, tmp, n * n * n);
-      this._applyGrid(tmp, n, lw);
+      let col = new Uint8Array(n * n * n), has = false;
+      if (cstr) { try { decodeBytes(cstr, col); has = true; } catch (e) { col = new Uint8Array(n * n * n); } }
+      if (pstr) {
+        const list = pstr.split(',').map((x) => parseInt(x, 10)).filter((x) => x >= 0 && x <= 0xffffff);
+        if (list.length) this.setPalette(list);
+      }
+      this._applyGrid(tmp, n, lw, col);
+      this.loadedColors = has;       // sans couleurs (ancienne sauvegarde) : l'application choisit
     }
 
     /** Installe un champ déjà rééchantillonné et reconfigure la grille */
-    _applyGrid(field, n, lw) {
+    _applyGrid(field, n, lw, col) {
       configure(n, lw);
       this.f = field;
-      this._src = this._sh = this._tmp = this._acc = null;
+      this.col = col || new Uint8Array(n * n * n);
+      this._src = this._sh = this._shc = this._srcC = this._tch = this._tmp = this._acc = this._map = this._mapBox = this._wu = this._wv = null;
       this.before = null;
       this.box = null;
       for (const m of this.chunks) if (m) { this.group.remove(m); m.geometry.dispose(); }
@@ -1076,7 +1465,8 @@
     /** Change la taille du plateau (mm) et/ou la résolution de la grille (voxels par axe) en conservant la forme */
     setWorld(lw, n) {
       if (lw === L && n === N) return;
-      this._applyGrid(resampleTo(this.f, N, L, n, lw), n, lw);
+      const nf = resampleTo(this.f, N, L, n, lw);
+      this._applyGrid(nf, n, lw, resampleColors(this.col, N, L, n, lw, nf));
     }
     /** Change la résolution de travail (conserve la forme) */
     setResolution(n) { this.setWorld(L, n); }
@@ -1086,7 +1476,7 @@
     /** Utilise un matériau fourni par l'application (matcap, éclairé…) pour tous les blocs */
     useMaterial(mat) {
       this.material = mat;
-      if (mat.color) mat.color.setHex(this.color);
+      mat.vertexColors = true; mat.color.setHex(0xffffff); mat.needsUpdate = true;   // les couleurs viennent des sommets
       for (const m of this.chunks) if (m) m.material = mat;
     }
 
@@ -1130,25 +1520,29 @@
       const cleaned = this._cleaned();
       const removed = cleaned.removed;
       let f = cleaned.f;
+      let colE = this.col;
       const baseN = N;
       let n = N;
       if (targetN && targetN !== N) {
         f = resampleTo(f, N, L, targetN, L);
+        colE = resampleColors(this.col, N, L, targetN, L, f);
         n = targetN;
         const hb = fieldBBox(f, n);
         if (hb) relaxField(f, n, 2, 0.5, hb);
       }
       configure(n, L);
       try {
-        return this._buildExportMesh(f, removed, n, fieldBBox(f, n), smoothIters || 0);
+        return this._buildExportMesh(f, removed, n, fieldBBox(f, n), smoothIters || 0, colE);
       } finally {
         configure(baseN, L);
       }
     }
 
-    _buildExportMesh(f, removed, n, bb, smoothIters) {
+    _buildExportMesh(f, removed, n, bb, smoothIters, colE) {
       const map = new Map();
       const verts = [];
+      const cols = [];
+      const prgb = this._palRGB;
       const idxs = [];
       const vid = (a, b) => {
         if (a > b) { const s = a; a = b; b = s; }
@@ -1158,6 +1552,8 @@
           edgeVertex(f, a, b, false);
           id = verts.length / 3;
           verts.push(vx, vy, vz);
+          const pc = colE[f[a] >= ISO ? a : b] * 3;            // couleur du voxel de matière au bout de l'arête
+          cols.push(Math.round(prgb[pc] * 255), Math.round(prgb[pc + 1] * 255), Math.round(prgb[pc + 2] * 255));
           map.set(key, id);
         }
         return id;
@@ -1170,6 +1566,9 @@
       }
       const positions = new Float32Array(verts);
       const indices = new Uint32Array(idxs);
+      const colors = new Uint8Array(cols);
+      let hasColors = false;
+      for (let i = 3; i < colors.length && !hasColors; i += 3) hasColors = colors[i] !== colors[0] || colors[i + 1] !== colors[1] || colors[i + 2] !== colors[2];
       if (smoothIters > 0) smoothMesh(positions, indices, smoothIters, 0.5, -0.53);
       const V = positions.length / 3;
       const nTri = indices.length / 3;
@@ -1206,7 +1605,7 @@
       }
       vol /= 6;
       return {
-        positions, indices, nTri, nVert: V, res: n,
+        positions, indices, colors, hasColors, nTri, nVert: V, res: n,
         manifold: bad === 0 && nTri > 0,
         problems: bad, removed,
         min: [minX, minY, minZ], max: [maxX, maxY, maxZ],
@@ -1215,5 +1614,6 @@
     }
   }
 
+  Clay.DEFAULT_PALETTE = [0xf2a679, 0x7cb7ff, 0x6ee7a0, 0xf78fc0, 0xfde047, 0xfaf9f7, 0xb8a2fb, 0x4ee3cf];
   global.ClayEngine = { Clay, ISO, grid: () => ({ N, H, FK, FLOOR_Y, L, HALF }) };
 })(window);

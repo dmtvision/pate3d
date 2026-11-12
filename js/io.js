@@ -63,6 +63,7 @@
   }
 
   function parseOBJ(text) {
+    const zUp = /^\s*#\s*Clay3D/.test(text);              // nos propres OBJ sont écrits Z vers le haut (comme le STL) : on les remet debout
     const v = [];
     const tris = [];
     const lines = text.split(/\r?\n/);
@@ -72,7 +73,7 @@
       if (line.startsWith('v ') || line.startsWith('v\t')) {
         const parts = line.split(/\s+/);
         if (parts.length >= 4) {
-          v.push(+parts[1], +parts[2], +parts[3]);
+          if (zUp) v.push(+parts[1], +parts[3], -parts[2]); else v.push(+parts[1], +parts[2], +parts[3]);
         }
       } else if (line.startsWith('f ') || line.startsWith('f\t')) {
         const parts = line.split(/\s+/).slice(1);
@@ -98,6 +99,29 @@
       throw new Error('Fichier OBJ sans triangles valides');
     }
     return new Float32Array(tris);
+  }
+
+  /** Soude les sommets identiques (même valeur exacte, aucun arrondi) d'une « soupe » de triangles : maillage indexé, géométrie inchangée */
+  function weldSoup(soup) {
+    const n = soup.length / 3;
+    let cap = 1; while (cap < n * 2) cap <<= 1;
+    const table = new Int32Array(cap).fill(-1);
+    const pos = new Float32Array(soup.length), pb = new Uint32Array(pos.buffer);
+    const sb = new Uint32Array(soup.buffer.slice(soup.byteOffset, soup.byteOffset + soup.byteLength));
+    const idx = new Uint32Array(n);
+    let nv = 0;
+    for (let i = 0; i < n; i++) {
+      let x = sb[i * 3], y = sb[i * 3 + 1], z = sb[i * 3 + 2];
+      if (soup[i * 3] === 0) x = 0; if (soup[i * 3 + 1] === 0) y = 0; if (soup[i * 3 + 2] === 0) z = 0;   // -0 et +0 : le même sommet
+      let h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(z, 83492791)) & (cap - 1);
+      for (;;) {
+        const v = table[h];
+        if (v < 0) { table[h] = nv; pb[nv * 3] = x; pb[nv * 3 + 1] = y; pb[nv * 3 + 2] = z; idx[i] = nv++; break; }
+        if (pb[v * 3] === x && pb[v * 3 + 1] === y && pb[v * 3 + 2] === z) { idx[i] = v; break; }
+        h = (h + 1) & (cap - 1);
+      }
+    }
+    return { positions: pos.slice(0, nv * 3), indices: idx };
   }
 
   /** Centre le maillage et le met à l'échelle (plus grande dimension = 1). */
@@ -241,7 +265,7 @@
     const p = mesh.positions;
     const [minX, minY, minZ] = mesh.min, [maxX, maxY, maxZ] = mesh.max;
     const dim = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
-    const s = targetMm / dim;
+    const s = targetMm ? targetMm / dim : 1;          // 0 = taille réelle (1 unité de la scène = 1 mm)
     const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
     const out = new Float32Array(p.length);
     for (let i = 0; i < p.length; i += 3) {
@@ -279,16 +303,32 @@
     return new Blob([buf], { type: 'model/stl' });
   }
 
+  /** OBJ ; si la sculpture a plusieurs couleurs, chaque sommet porte sa couleur (« v x y z r g b », 0 à 1) : lue par Blender, MeshLab… */
   function writeOBJ(mesh, targetMm) {
     const { positions } = transformForPrint(mesh, targetMm);
-    const idx = mesh.indices;
-    const parts = ['# Clay3D - sculpture manifold (mm)\n'];
+    const idx = mesh.indices, col = mesh.hasColors ? mesh.colors : null;
+    const parts = ['# Clay3D - sculpture manifold (mm)' + (col ? ', couleurs par sommet' : '') + '\n'];
     for (let i = 0; i < positions.length; i += 3) {
-      parts.push('v ' + positions[i].toFixed(4) + ' ' + positions[i + 1].toFixed(4) + ' ' + positions[i + 2].toFixed(4) + '\n');
+      parts.push('v ' + positions[i].toFixed(4) + ' ' + positions[i + 1].toFixed(4) + ' ' + positions[i + 2].toFixed(4) +
+        (col ? ' ' + (col[i] / 255).toFixed(4) + ' ' + (col[i + 1] / 255).toFixed(4) + ' ' + (col[i + 2] / 255).toFixed(4) : '') + '\n');
     }
     for (let t = 0; t < idx.length; t += 3) {
       parts.push('f ' + (idx[t] + 1) + ' ' + (idx[t + 1] + 1) + ' ' + (idx[t + 2] + 1) + '\n');
     }
+    return new Blob(parts, { type: 'text/plain' });
+  }
+
+  /** PLY (texte) avec couleurs par sommet : lu partout (Blender, MeshLab, ZBrush, logiciels de découpe couleur…) */
+  function writePLY(mesh, targetMm) {
+    const { positions } = transformForPrint(mesh, targetMm);
+    const idx = mesh.indices, col = mesh.colors, V = positions.length / 3;
+    const parts = ['ply\nformat ascii 1.0\ncomment Clay3D - sculpture manifold (mm)\nelement vertex ' + V +
+      '\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face ' + (idx.length / 3) +
+      '\nproperty list uchar int vertex_indices\nend_header\n'];
+    for (let i = 0; i < positions.length; i += 3) {
+      parts.push(positions[i].toFixed(4) + ' ' + positions[i + 1].toFixed(4) + ' ' + positions[i + 2].toFixed(4) + ' ' + col[i] + ' ' + col[i + 1] + ' ' + col[i + 2] + '\n');
+    }
+    for (let t = 0; t < idx.length; t += 3) parts.push('3 ' + idx[t] + ' ' + idx[t + 1] + ' ' + idx[t + 2] + '\n');
     return new Blob(parts, { type: 'text/plain' });
   }
 
@@ -301,5 +341,5 @@
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
   }
 
-  global.ClayIO = { parseSTL, parseOBJ, normalize, SHAPES, shapeSoup, transformForPrint, writeSTL, writeOBJ, download };
+  global.ClayIO = { parseSTL, parseOBJ, normalize, SHAPES, shapeSoup, transformForPrint, writeSTL, writeOBJ, writePLY, weldSoup, download };
 })(window);
