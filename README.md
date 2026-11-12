@@ -227,3 +227,10 @@ Vérifié : les 37 formes s'exportent étanches (manifold), sans débris.
 - [`docs/GUIDE-IA-TUTORIELS.md`](docs/GUIDE-IA-TUTORIELS.md) : guide pour une IA (ou une personne) qui crée des tutoriels avec captures d'écran — libellés exacts et sélecteurs de
   toute l'interface, état propre, pièges, recettes testées. [`docs/tuto-helper.js`](docs/tuto-helper.js) : aide `window.T` (nouvelle sculpture, outils, traits simulés, caméra,
   cadres rouges numérotés, sans son).
+
+## Modèles de l'atelier, surfaces sans strates (v66)
+- **Modèles de l'atelier** (première catégorie de « Nouveau » et de « Formes ») : Fantôme, Bonhomme, Alien, Chat debout, Chat assis — les modèles STL faits à la main,
+  remis debout, tournés vers l'avant, mis à 9–11 cm, centrés et posés sur le plateau. `node tools/build-models.js` les convertit en champs de voxels compacts (`js/models.js`,
+  ~200 Ko) ; au chargement ils sont rééchantillonnés à la résolution courante puis lissés de 1,8 mm. Pour ajouter un modèle : une ligne dans `MODELS` du script, puis le relancer.
+- **Surfaces plus nettes, sans strates** : normales calculées avec un gradient de Sobel 3×3×3 (au lieu des 6 voisins) et formes collées / creusées échantillonnées 3 × 3 par colonne de
+  voxels (au lieu de 2 × 2) : les marches en escalier (« strates ») ne se voient plus dans l'éclairage. Vérifié : les 42 formes de départ s'exportent étanches.

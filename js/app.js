@@ -1928,7 +1928,7 @@
   shapeSection('Formes simples', IO.SHAPES.map((s) => ({
     emoji: s.emoji, name: s.name, pick: () => { closeModals(); startPlacement(IO.shapeSoup(THREE, s.id), s.name); }
   })), 'shape-grid');
-  ['Personnages', 'Animaux', 'Objets', 'Bases'].forEach((cat) => {
+  [...ClayStarters.categories.filter((c) => c !== 'Bases'), 'Bases'].forEach((cat) => {   // modèles de l'atelier en premier, les bases à la fin
     const items = ClayStarters.list.filter((s) => s.cat === cat && s.id !== 'ball' && s.id !== 'ballair');   // la boule existe déjà dans les formes simples
     shapeSection(cat === 'Bases' ? 'Autres formes' : cat, items.map((s) => ({ emoji: s.emoji, name: s.name, pick: () => placeStarter(s) })));
   });
@@ -2340,7 +2340,7 @@
     if (workerBroken || typeof Worker === 'undefined') return null;
     if (!exportWorker) {
       try {
-        exportWorker = new Worker('js/exportWorker.js?v=63');
+        exportWorker = new Worker('js/exportWorker.js?v=66');
         exportWorker.onmessage = (e) => onExportDone(e.data);
         exportWorker.onerror = () => { workerBroken = true; exportWorker = null; if (pendingExport) runExportSync(); };
       } catch (err) { workerBroken = true; exportWorker = null; }

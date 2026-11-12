@@ -1,7 +1,7 @@
 # Pâte3D — guide pour une IA qui crée des tutoriels
 
 Ce fichier sert à une IA (ou à une personne) qui doit produire des **tutoriels détaillés avec captures d'écran** de Pâte3D, **sans erreur**.
-Tout ce qui est écrit ici a été vérifié sur la **version 63** (le numéro s'affiche en bas de la fenêtre d'aide « ? »).
+Tout ce qui est écrit ici a été vérifié sur la **version 66** (le numéro s'affiche en bas de la fenêtre d'aide « ? »).
 Si la version affichée est différente, revérifier les libellés avant de publier.
 
 Compagnon : [`docs/tuto-helper.js`](tuto-helper.js) — petite aide JavaScript (`window.T`) pour piloter l'application de façon reproductible
@@ -41,7 +41,7 @@ Charger l'aide dans la page (console du navigateur ou outil JavaScript) :
 
 ```js
 await fetch('docs/tuto-helper.js?x=' + Date.now()).then((r) => r.text()).then((code) => (0, eval)(code));
-T.state();   // { version: 'Version 63', tool: 'add', modals: [], sound: false, … }
+T.state();   // { version: 'Version 66', tool: 'add', modals: [], sound: false, … }
 ```
 
 ---
@@ -155,6 +155,8 @@ Ordre des 8 couleurs : terre cuite, bleu, vert, rose, jaune, blanc, violet, turq
 - **Surface vide** (`#start-empty`) : plateau vide, la fenêtre Formes s'ouvre aussitôt.
 - **En l'air** (`#start-air`, interrupteur) : la forme choisie flotte 22 mm au-dessus du plateau.
 - Formes de départ (`[data-start="…"]`), grosses et lisses :
+  - Modèles de l'atelier (en premier) : `atelier-fantome` Fantôme, `atelier-bonhomme` Bonhomme, `atelier-alien` Alien, `atelier-chat-debout` Chat debout,
+    `atelier-chat-assis` Chat assis (modèles faits à la main, voir `tools/build-models.js`)
   - Bases : `ball` Boule, `ballair` Boule en l'air, `egg` Œuf, `cube` Cube, `pillar` Pilier, `cone` Cône, `prism` Toit, `plate` Plaque
   - Personnages : `snowman` Bonhomme de neige, `person` Personnage, `robot` Robot
   - Animaux : `dog` Chien, `cat` Chat, `horse` Cheval, `bear` Ours, `pig` Cochon, `elephant` Éléphant, `rabbit` Lapin, `frog` Grenouille, `turtle` Tortue,
@@ -164,7 +166,7 @@ Ordre des 8 couleurs : terre cuite, bleu, vert, rose, jaune, blanc, violet, turq
 
 ### Formes (`#modal-shapes`, bouton Formes ou touche F)
 - « Formes simples » (`#shape-grid`) : Boule, Cube, Cylindre, Cône, Pyramide, Anneau, Cœur, Étoile, Fleur, Patte, Lune, Goutte, Diamant.
-- Puis les formes de départ, titres exacts : « Personnages », « Animaux », « Objets », « Autres formes » (les bases, sans Boule ni Boule en l'air),
+- Puis les formes de départ, titres exacts : « Modèles de l'atelier », « Personnages », « Animaux », « Objets », « Autres formes » (les bases, sans Boule ni Boule en l'air),
   et un bouton « Importer un fichier 3D (STL ou OBJ) ».
 - Toucher une forme ferme la fenêtre et ouvre le **panneau de placement** (section 6).
 

@@ -331,6 +331,31 @@
   /* Sommet sur l'arête (ia, ib) : position (+ normale) dans vx.. */
   let vx = 0, vy = 0, vz = 0, vnx = 0, vny = 0, vnz = 0;
   function gradAt(f, idx, i, j, k, out) {
+    if (i > 0 && i < N - 1 && j > 0 && j < N - 1 && k > 0 && k < N - 1) {
+      // Sobel 3×3×3 : chaque différence est moyennée sur ses voisines (poids 1-2-1) ; au sol, la rangée du dessous est remplacée par la rangée courante
+      const ym1 = j > FK ? -N : 0;
+      let gx = 0, gy = 0, gz = 0;
+      for (let b = -1; b <= 1; b++) {
+        const yo = b < 0 ? ym1 : b * N, wb = b === 0 ? 2 : 1;
+        for (let c = -1; c <= 1; c++) {
+          const zo = c * N2, w = wb * (c === 0 ? 2 : 1), o = idx + yo + zo;
+          gx += w * (f[o - 1] - f[o + 1]);
+        }
+      }
+      for (let a = -1; a <= 1; a++) {
+        const wa = a === 0 ? 2 : 1;
+        for (let c = -1; c <= 1; c++) {
+          const w = wa * (c === 0 ? 2 : 1), o = idx + a + c * N2;
+          gy += w * (f[o + ym1] - f[o + N]);
+        }
+        for (let b = -1; b <= 1; b++) {
+          const w = wa * (b === 0 ? 2 : 1), o = idx + a + (b < 0 ? ym1 : b * N);
+          gz += w * (f[o - N2] - f[o + N2]);
+        }
+      }
+      out[0] = gx; out[1] = gy; out[2] = gz;                // = -gradient : vers l'extérieur
+      return;
+    }
     const xm = i > 0 ? f[idx - 1] : f[idx], xp = i < N - 1 ? f[idx + 1] : f[idx];
     const ym = j > FK ? f[idx - N] : f[idx], yp = j < N - 1 ? f[idx + N] : f[idx];   // au sol : différence à sens unique (le vide sous le plateau ne doit pas pencher les normales des parois)
     const zm = k > 0 ? f[idx - N2] : f[idx], zp = k < N - 1 ? f[idx + N2] : f[idx];
@@ -636,10 +661,38 @@
       if (kind === 'empty') { this.markAll(); return; }
       this.beginEdit();
       const st = global.ClayStarters && global.ClayStarters.get(kind || 'ball');
-      this.build(global.ClayStarters && lift ? global.ClayStarters.lifted(st ? st.ops : [['s', 0, 15, 0, 16]], lift) : (st ? st.ops : [['s', 0, 15, 0, 16]]));
-      this.blurBox(2.6);                         // formes de départ lisses : on ne voit plus les blocs qui les composent
+      if (st && st.field) {                      // modèle de l'atelier : champ de voxels enregistré (voir js/models.js)
+        this._stampField(st.field, lift || 0);
+        this.blurBox(st.blur || 1.4);
+      } else {
+        this.build(global.ClayStarters && lift ? global.ClayStarters.lifted(st ? st.ops : [['s', 0, 15, 0, 16]], lift) : (st ? st.ops : [['s', 0, 15, 0, 16]]));
+        this.blurBox(2.6);                       // formes de départ lisses : on ne voit plus les blocs qui les composent
+      }
       this.endEdit();
       this.markAll();
+    }
+    /** Ajoute un champ enregistré « n:plateau|données » (autre grille possible) : rééchantillonné à la grille courante, monté de `lift` mm */
+    _stampField(str, lift) {
+      const bar = str.indexOf('|'), head = str.slice(0, bar).split(':');
+      const n = parseInt(head[0], 10), lw = parseFloat(head[1]);
+      if (!(n >= 16 && n <= 256) || !(lw > 0)) return;
+      const src = new Float32Array(n * n * n);
+      decode(str.slice(bar + 1), src, n * n * n);
+      const out = resampleTo(src, n, lw, N, L), f = this.f, dj = Math.round(lift / H);
+      let x0 = N, y0 = N, z0 = N, x1 = -1, y1 = -1, z1 = -1;
+      for (let k = 0; k < N; k++)
+        for (let j = 0; j < N; j++) {
+          const jj = j + dj;
+          if (jj < FK || jj > N - 2) continue;
+          let o = j * N + k * N2, t = jj * N + k * N2;
+          for (let i = 0; i < N; i++, o++, t++) {
+            const v = out[o];
+            if (v <= 0.001 || v <= f[t]) continue;
+            f[t] = v;
+            if (i < x0) x0 = i; if (i > x1) x1 = i; if (jj < y0) y0 = jj; if (jj > y1) y1 = jj; if (k < z0) z0 = k; if (k > z1) z1 = k;
+          }
+        }
+      if (x1 >= 0) this._grow(x0, y0, z0, x1, y1, z1);
     }
     /** Maillage d'une forme de départ sous forme de « soupe » de triangles (9 nombres par triangle, en mm, posée sur le
      *  plateau), pour la poser comme n'importe quelle forme. Construit dans un champ temporaire de la grille courante :
@@ -1263,7 +1316,7 @@
     /** Colle (add) ou creuse (remove) un maillage "soupe de triangles" en coordonnées monde. */
     stampMesh(pos, mode) {
       const nT = Math.floor(pos.length / 9);
-      const S = N * 2;
+      const SS = 3, S = N * SS;                     // sous-échantillons par voxel (en x et en z)
       const cols = new Array(S * S);
       const EPX = 0.000137, EPZ = 0.000091;
       let bx0 = N, by0 = N, bz0 = N, bx1 = -1, by1 = -1, bz1 = -1;
@@ -1276,12 +1329,12 @@
         if (Math.abs(den) < 1e-9) continue;
         const minx = Math.min(ax, bx, cx), maxx = Math.max(ax, bx, cx);
         const minz = Math.min(az, bz, cz), maxz = Math.max(az, bz, cz);
-        const s0 = Math.max(0, Math.ceil((minx + 0.25) * 2)), s1 = Math.min(S - 1, Math.floor((maxx + 0.25) * 2));
-        const r0 = Math.max(0, Math.ceil((minz + 0.25) * 2)), r1 = Math.min(S - 1, Math.floor((maxz + 0.25) * 2));
+        const s0 = Math.max(0, Math.ceil((minx + 0.5) * SS - 0.5)), s1 = Math.min(S - 1, Math.floor((maxx + 0.5) * SS - 0.5));
+        const r0 = Math.max(0, Math.ceil((minz + 0.5) * SS - 0.5)), r1 = Math.min(S - 1, Math.floor((maxz + 0.5) * SS - 0.5));
         for (let r = r0; r <= r1; r++) {
-          const z = r * 0.5 - 0.25 + EPZ;
+          const z = (r + 0.5) / SS - 0.5 + EPZ;
           for (let s = s0; s <= s1; s++) {
-            const x = s * 0.5 - 0.25 + EPX;
+            const x = (s + 0.5) / SS - 0.5 + EPX;
             const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / den;
             const l2 = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / den;
             const l3 = 1 - l1 - l2;
@@ -1298,7 +1351,7 @@
         if (!arr) continue;
         arr.sort((p, q) => p - q);
         const s = key % S, r = (key - s) / S;
-        const i = s >> 1, k = r >> 1;
+        const i = Math.floor(s / SS), k = Math.floor(r / SS);
         if (i < 1 || i > N - 2 || k < 1 || k > N - 2) continue;
         for (let m = 0; m + 1 < arr.length; m += 2) {
           const y0 = arr[m], y1 = arr[m + 1];
@@ -1306,7 +1359,7 @@
           for (let j = j0; j <= j1; j++) {
             const ov = Math.min(y1, j + 0.5) - Math.max(y0, j - 0.5);
             if (ov > 0) {
-              acc[i + j * N + k * N2] += 0.25 * ov;
+              acc[i + j * N + k * N2] += ov / (SS * SS);
               if (i < bx0) bx0 = i; if (i > bx1) bx1 = i;
               if (j < by0) by0 = j; if (j > by1) by1 = j;
               if (k < bz0) bz0 = k; if (k > bz1) bz1 = k;
